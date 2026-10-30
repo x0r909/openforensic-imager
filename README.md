@@ -104,3 +104,4 @@ reader, and evidence metadata persistence.
   ABI, worker, hash, timestamp, and audit contracts.
 - [docs/testing/fixtures.md](docs/testing/fixtures.md): synthetic fixture policy.
 
+# openforensic-imager
