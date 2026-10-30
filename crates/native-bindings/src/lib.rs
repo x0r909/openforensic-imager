@@ -1,14 +1,26 @@
+use std::any::Any;
+use std::collections::BTreeMap;
 use std::ffi::{CString, c_char};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::path::Path;
 use std::ptr;
+use std::str::FromStr;
 
+use acquisition::{
+    AcquisitionOptions, AcquisitionRequest, AcquisitionStatus, OutputFormat,
+    acquire_path_with_cancel, verify_image,
+};
 use evidence_manager::{AddEvidence, CaseStore, CreateCase, SourceSnapshot};
-use forensic_core::{CaseId, EvidenceId};
+use filesystem::FileSystem;
+use forensic_core::{CaseId, EvidenceId, JobId};
+use hashing::HashAlgorithm;
+use job_manager::{JobError, JobManager, JobOutcome};
+use partition_analyzer::analyze_partitions;
 use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
 
 const ABI_MAJOR: u32 = 1;
-const ABI_MINOR: u32 = 0;
+const ABI_MINOR: u32 = 1;
 const MAX_REQUEST_BYTES: usize = 1024 * 1024;
 
 #[allow(non_camel_case_types)]
@@ -46,6 +58,36 @@ struct EvidenceAddRequest {
     source: SourceSnapshot,
 }
 
+#[derive(Deserialize)]
+#[serde(tag = "operation", rename_all = "snake_case")]
+enum JobRequest {
+    PartitionAnalysis {
+        path: String,
+    },
+    FilesystemList {
+        path: String,
+        offset_bytes: u64,
+        inode: u64,
+    },
+    Verification {
+        path: String,
+        algorithms: Vec<HashAlgorithm>,
+        expected: BTreeMap<HashAlgorithm, String>,
+    },
+    Acquisition {
+        source_path: String,
+        destination_dir: String,
+        base_name: String,
+        format: OutputFormat,
+        options: AcquisitionOptions,
+    },
+}
+
+#[allow(non_camel_case_types)]
+pub struct ofi_job_manager {
+    manager: JobManager,
+}
+
 #[derive(Serialize)]
 struct SuccessResponse<T> {
     abi_major: u32,
@@ -63,6 +105,202 @@ struct FfiError {
 #[unsafe(no_mangle)]
 pub extern "C" fn ofi_abi_version() -> u32 {
     ABI_MAJOR
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn ofi_abi_version_minor() -> u32 {
+    ABI_MINOR
+}
+
+#[unsafe(no_mangle)]
+/// Creates a background job manager.
+///
+/// # Safety
+///
+/// `output` and `error` must point to writable pointer slots. The caller owns a
+/// successful manager and must release it with `ofi_job_manager_free`.
+pub unsafe extern "C" fn ofi_job_manager_new(
+    worker_threads: u32,
+    output: *mut *mut ofi_job_manager,
+    error: *mut *mut ofi_error,
+) -> ofi_status {
+    unsafe {
+        initialize_outputs(ptr::null_mut(), ptr::null_mut(), error);
+        if !output.is_null() {
+            *output = ptr::null_mut();
+        }
+    }
+    if output.is_null() {
+        unsafe {
+            set_error(
+                error,
+                FfiError {
+                    status: ofi_status::OFI_STATUS_INVALID_ARGUMENT,
+                    code: "invalid_argument",
+                    message: "job manager output must not be null".to_owned(),
+                },
+            );
+        }
+        return ofi_status::OFI_STATUS_INVALID_ARGUMENT;
+    }
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        JobManager::new(worker_threads as usize)
+    }));
+    match outcome {
+        Ok(Ok(manager)) => {
+            unsafe {
+                *output = Box::into_raw(Box::new(ofi_job_manager { manager }));
+            }
+            ofi_status::OFI_STATUS_OK
+        }
+        Ok(Err(manager_error)) => {
+            let code = if worker_threads == 0 {
+                "job.invalid_worker_count"
+            } else {
+                "job.runtime"
+            };
+            unsafe {
+                set_error(
+                    error,
+                    FfiError {
+                        status: ofi_status::OFI_STATUS_OPERATION_FAILED,
+                        code,
+                        message: manager_error.message().to_owned(),
+                    },
+                );
+            }
+            ofi_status::OFI_STATUS_OPERATION_FAILED
+        }
+        Err(_) => {
+            unsafe {
+                set_error(
+                    error,
+                    FfiError {
+                        status: ofi_status::OFI_STATUS_PANIC,
+                        code: "panic",
+                        message: "internal panic was contained at the ABI boundary".to_owned(),
+                    },
+                );
+            }
+            ofi_status::OFI_STATUS_PANIC
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+/// Frees a job manager.
+///
+/// # Safety
+///
+/// `manager` must be null or a pointer returned by `ofi_job_manager_new` and
+/// must not be used after this call.
+pub unsafe extern "C" fn ofi_job_manager_free(manager: *mut ofi_job_manager) {
+    if !manager.is_null() {
+        unsafe {
+            drop(Box::from_raw(manager));
+        }
+    }
+}
+
+#[unsafe(no_mangle)]
+/// Submits a supported background operation from a UTF-8 JSON request.
+///
+/// # Safety
+///
+/// `manager` must be a live manager. Request and output pointer rules match
+/// `ofi_case_create`.
+pub unsafe extern "C" fn ofi_job_submit(
+    manager: *mut ofi_job_manager,
+    request: *const u8,
+    request_len: usize,
+    response: *mut *mut u8,
+    response_len: *mut usize,
+    error: *mut *mut ofi_error,
+) -> ofi_status {
+    if manager.is_null() {
+        unsafe {
+            initialize_outputs(response, response_len, error);
+            set_error(
+                error,
+                FfiError {
+                    status: ofi_status::OFI_STATUS_INVALID_ARGUMENT,
+                    code: "invalid_argument",
+                    message: "job manager must not be null".to_owned(),
+                },
+            );
+        }
+        return ofi_status::OFI_STATUS_INVALID_ARGUMENT;
+    }
+    let manager = unsafe { &(*manager).manager };
+    unsafe {
+        run_adapter(
+            request,
+            request_len,
+            response,
+            response_len,
+            error,
+            |bytes| handle_job_submit(manager, bytes),
+        )
+    }
+}
+
+#[unsafe(no_mangle)]
+/// Returns a job snapshot by UUID.
+///
+/// # Safety
+///
+/// `manager` must be live and `job_id` must point to a NUL-terminated UTF-8
+/// string. Output pointer rules match `ofi_case_create`.
+pub unsafe extern "C" fn ofi_job_snapshot(
+    manager: *mut ofi_job_manager,
+    job_id: *const c_char,
+    response: *mut *mut u8,
+    response_len: *mut usize,
+    error: *mut *mut ofi_error,
+) -> ofi_status {
+    unsafe {
+        initialize_outputs(response, response_len, error);
+    }
+    let Some((manager, job_id)) = (unsafe { job_manager_and_id(manager, job_id, error) }) else {
+        return ofi_status::OFI_STATUS_INVALID_ARGUMENT;
+    };
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        let snapshot = manager
+            .snapshot(&job_id)
+            .map_err(job_operation_error)?
+            .ok_or_else(|| FfiError {
+                status: ofi_status::OFI_STATUS_OPERATION_FAILED,
+                code: "job.not_found",
+                message: format!("job {job_id} was not found"),
+            })?;
+        success_bytes(snapshot)
+    }));
+    unsafe { complete_adapter_outcome(outcome, response, response_len, error) }
+}
+
+#[unsafe(no_mangle)]
+/// Requests cancellation of a non-terminal job.
+///
+/// # Safety
+///
+/// Pointer rules match `ofi_job_snapshot`.
+pub unsafe extern "C" fn ofi_job_cancel(
+    manager: *mut ofi_job_manager,
+    job_id: *const c_char,
+    response: *mut *mut u8,
+    response_len: *mut usize,
+    error: *mut *mut ofi_error,
+) -> ofi_status {
+    unsafe {
+        initialize_outputs(response, response_len, error);
+    }
+    let Some((manager, job_id)) = (unsafe { job_manager_and_id(manager, job_id, error) }) else {
+        return ofi_status::OFI_STATUS_INVALID_ARGUMENT;
+    };
+    let outcome = catch_unwind(AssertUnwindSafe(|| {
+        success_bytes(json!({"cancelled": manager.cancel(&job_id)}))
+    }));
+    unsafe { complete_adapter_outcome(outcome, response, response_len, error) }
 }
 
 #[unsafe(no_mangle)]
@@ -177,14 +415,17 @@ pub unsafe extern "C" fn ofi_error_message(error: *const ofi_error) -> *const c_
     unsafe { (*error).message.as_ptr() }
 }
 
-unsafe fn run_adapter(
+unsafe fn run_adapter<F>(
     request: *const u8,
     request_len: usize,
     response: *mut *mut u8,
     response_len: *mut usize,
     error: *mut *mut ofi_error,
-    handler: fn(&[u8]) -> Result<Vec<u8>, FfiError>,
-) -> ofi_status {
+    handler: F,
+) -> ofi_status
+where
+    F: FnOnce(&[u8]) -> Result<Vec<u8>, FfiError>,
+{
     unsafe {
         initialize_outputs(response, response_len, error);
     }
@@ -207,6 +448,15 @@ unsafe fn run_adapter(
         handler(&request)
     }));
 
+    unsafe { complete_adapter_outcome(outcome, response, response_len, error) }
+}
+
+unsafe fn complete_adapter_outcome(
+    outcome: Result<Result<Vec<u8>, FfiError>, Box<dyn Any + Send>>,
+    response: *mut *mut u8,
+    response_len: *mut usize,
+    error: *mut *mut ofi_error,
+) -> ofi_status {
     match outcome {
         Ok(Ok(bytes)) => {
             let boxed = bytes.into_boxed_slice();
@@ -238,6 +488,151 @@ unsafe fn run_adapter(
             }
             ofi_status::OFI_STATUS_PANIC
         }
+    }
+}
+
+unsafe fn job_manager_and_id<'a>(
+    manager: *mut ofi_job_manager,
+    job_id: *const c_char,
+    error: *mut *mut ofi_error,
+) -> Option<(&'a JobManager, JobId)> {
+    if manager.is_null() || job_id.is_null() {
+        unsafe {
+            set_error(
+                error,
+                FfiError {
+                    status: ofi_status::OFI_STATUS_INVALID_ARGUMENT,
+                    code: "invalid_argument",
+                    message: "job manager and job id must not be null".to_owned(),
+                },
+            );
+        }
+        return None;
+    }
+    let job_id = unsafe { std::ffi::CStr::from_ptr(job_id) }
+        .to_str()
+        .ok()
+        .and_then(|value| JobId::from_str(value).ok());
+    let Some(job_id) = job_id else {
+        unsafe {
+            set_error(
+                error,
+                FfiError {
+                    status: ofi_status::OFI_STATUS_INVALID_ARGUMENT,
+                    code: "invalid_argument",
+                    message: "job id must be a UUID".to_owned(),
+                },
+            );
+        }
+        return None;
+    };
+    let manager = unsafe { &(*manager).manager };
+    Some((manager, job_id))
+}
+
+fn handle_job_submit(manager: &JobManager, request: &[u8]) -> Result<Vec<u8>, FfiError> {
+    let request: JobRequest = parse_request(request)?;
+    let job_id = match request {
+        JobRequest::PartitionAnalysis { path } => manager.submit("partition_analysis", move |_| {
+            let analysis = analyze_partitions(Path::new(&path))
+                .map_err(|error| JobError::failed("partition.failed", error.to_string()))?;
+            job_success(analysis)
+        }),
+        JobRequest::FilesystemList {
+            path,
+            offset_bytes,
+            inode,
+        } => manager.submit("filesystem_list", move |_| {
+            let filesystem = FileSystem::open(Path::new(&path), offset_bytes)
+                .map_err(|error| JobError::failed("filesystem.open", error.to_string()))?;
+            let entries = filesystem
+                .list_directory(inode)
+                .map_err(|error| JobError::failed("filesystem.list", error.to_string()))?;
+            job_success(json!({
+                "kind": filesystem.kind(),
+                "block_size": filesystem.block_size(),
+                "inode_count": filesystem.inode_count(),
+                "entries": entries,
+            }))
+        }),
+        JobRequest::Verification {
+            path,
+            algorithms,
+            expected,
+        } => manager.submit("verification", move |_| {
+            let report = verify_image(Path::new(&path), &algorithms, &expected)
+                .map_err(|error| JobError::failed("verification.failed", error.to_string()))?;
+            job_success(report)
+        }),
+        JobRequest::Acquisition {
+            source_path,
+            destination_dir,
+            base_name,
+            format,
+            options,
+        } => manager.submit("acquisition", move |context| {
+            let result = acquire_path_with_cancel(
+                AcquisitionRequest {
+                    source_path: source_path.into(),
+                    destination_dir: destination_dir.into(),
+                    base_name,
+                    format,
+                    options,
+                },
+                &context.cancellation_token(),
+            )
+            .map_err(|error| JobError::failed("acquisition.failed", error.to_string()))?;
+            match result.status {
+                AcquisitionStatus::Succeeded => job_success(json!({
+                    "status": result.status,
+                    "manifest": result.manifest,
+                    "manifest_path": result.manifest_path,
+                })),
+                AcquisitionStatus::Partial => {
+                    let value = job_value(json!({
+                        "status": result.status,
+                        "manifest": result.manifest,
+                        "manifest_path": result.manifest_path,
+                    }))?;
+                    Ok(JobOutcome::partial(
+                        value,
+                        "acquisition completed with read errors or unverified output",
+                    ))
+                }
+                AcquisitionStatus::Failed => Err(JobError::failed(
+                    "acquisition.failed",
+                    "acquisition did not produce a verified image",
+                )),
+                AcquisitionStatus::Cancelled => Err(JobError::cancelled("acquisition cancelled")),
+            }
+        }),
+    }
+    .map_err(job_submit_error)?;
+    success_bytes(json!({"job_id": job_id}))
+}
+
+fn job_success<T: Serialize>(value: T) -> Result<JobOutcome, JobError> {
+    Ok(JobOutcome::succeeded(job_value(value)?))
+}
+
+fn job_value<T: Serialize>(value: T) -> Result<Value, JobError> {
+    serde_json::to_value(value)
+        .map_err(|error| JobError::failed("job.serialization", error.to_string()))
+}
+
+fn job_submit_error(error: JobError) -> FfiError {
+    FfiError {
+        status: ofi_status::OFI_STATUS_OPERATION_FAILED,
+        code: "job.submit",
+        message: error.to_string(),
+    }
+}
+
+fn job_operation_error(error: JobError) -> FfiError {
+    FfiError {
+        status: ofi_status::OFI_STATUS_OPERATION_FAILED,
+        code: "job.operation_failed",
+        message: error.to_string(),
     }
 }
 

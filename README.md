@@ -37,6 +37,8 @@ and verified on the local workspace:
 - Extraction metadata and JSON, CSV, and HTML reports.
 - Tokio background jobs with progress, cancellation, partial outcomes, and
   panic containment.
+- C ABI 1.1 job submission, snapshot, cancellation, partition analysis,
+  filesystem listing, verification, and acquisition.
 
 Architecture and review gates:
 

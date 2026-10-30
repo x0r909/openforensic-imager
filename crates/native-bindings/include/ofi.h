@@ -17,8 +17,39 @@ typedef enum ofi_status {
 } ofi_status;
 
 typedef struct ofi_error ofi_error;
+typedef struct ofi_job_manager ofi_job_manager;
 
 uint32_t ofi_abi_version(void);
+uint32_t ofi_abi_version_minor(void);
+
+ofi_status ofi_job_manager_new(
+    uint32_t worker_threads,
+    ofi_job_manager **manager,
+    ofi_error **error);
+
+void ofi_job_manager_free(ofi_job_manager *manager);
+
+ofi_status ofi_job_submit(
+    ofi_job_manager *manager,
+    const uint8_t *request,
+    size_t request_len,
+    uint8_t **response,
+    size_t *response_len,
+    ofi_error **error);
+
+ofi_status ofi_job_snapshot(
+    ofi_job_manager *manager,
+    const char *job_id,
+    uint8_t **response,
+    size_t *response_len,
+    ofi_error **error);
+
+ofi_status ofi_job_cancel(
+    ofi_job_manager *manager,
+    const char *job_id,
+    uint8_t **response,
+    size_t *response_len,
+    ofi_error **error);
 
 ofi_status ofi_case_create(
     const uint8_t *request,

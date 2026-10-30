@@ -36,9 +36,7 @@ fn shared_cancellation_stops_an_acquisition_job() {
             let result = acquire_path_with_cancel(request, &context.cancellation_token())
                 .map_err(|error| JobError::failed("acquisition.failed", error.to_string()))?;
             match result.status {
-                AcquisitionStatus::Cancelled => {
-                    Err(JobError::cancelled("acquisition cancelled"))
-                }
+                AcquisitionStatus::Cancelled => Err(JobError::cancelled("acquisition cancelled")),
                 AcquisitionStatus::Succeeded => Ok(JobOutcome::succeeded(json!({
                     "status": result.status,
                     "manifest": result.manifest,

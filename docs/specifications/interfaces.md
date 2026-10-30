@@ -163,6 +163,52 @@ Job states:
 - `failed`
 - `cancelled`
 
+## Job submission
+
+The C ABI job manager accepts these JSON operation bodies:
+
+```json
+{"operation": "partition_analysis", "path": "/evidence/disk.E01"}
+```
+
+```json
+{
+  "operation": "filesystem_list",
+  "path": "/evidence/disk.E01",
+  "offset_bytes": 1048576,
+  "inode": 2
+}
+```
+
+```json
+{
+  "operation": "verification",
+  "path": "/evidence/disk.E01",
+  "algorithms": ["sha256", "sha1"],
+  "expected": {"sha256": "lowercase hex"}
+}
+```
+
+```json
+{
+  "operation": "acquisition",
+  "source_path": "/dev/disk/by-id/example",
+  "destination_dir": "/cases/2026-001/acquisition",
+  "base_name": "evidence-01",
+  "format": "raw",
+  "options": {
+    "block_size": 1048576,
+    "maximum_segment_size": 0,
+    "compression": "none",
+    "verify_after": true
+  }
+}
+```
+
+A successful submission returns a `job_id`. The caller polls
+`ofi_job_snapshot` and may call `ofi_job_cancel` while the job is non-terminal.
+Cancellation is cooperative; a terminal state remains immutable.
+
 ## Viewer page
 
 ```json

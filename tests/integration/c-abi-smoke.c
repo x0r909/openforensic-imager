@@ -7,6 +7,22 @@
 #include "ofi.h"
 
 int main(void) {
+    if (ofi_abi_version() != 1 || ofi_abi_version_minor() != 1) {
+        fprintf(stderr, "unexpected ABI version\n");
+        return 1;
+    }
+    ofi_job_manager *jobs = NULL;
+    ofi_error *job_error = NULL;
+    if (ofi_job_manager_new(1, &jobs, &job_error) != OFI_STATUS_OK || jobs == NULL ||
+        job_error != NULL) {
+        fprintf(stderr, "job manager creation failed\n");
+        if (job_error != NULL) {
+            ofi_error_free(job_error);
+        }
+        return 1;
+    }
+    ofi_job_manager_free(jobs);
+
     char db_path[256];
     snprintf(db_path, sizeof(db_path), "/tmp/openforensic-c-abi-%ld.db", (long)getpid());
     unlink(db_path);
