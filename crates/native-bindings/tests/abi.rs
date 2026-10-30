@@ -109,7 +109,7 @@ fn case_and_evidence_requests_return_owned_json() {
     unsafe { ofi_bytes_free(response, response_len) };
 
     let request = format!(
-        r#"{{"db_path":"{}","id":"{evidence_id}","case_id":"{case_id}","description":"disk","source_path":"/tmp/disk.raw","source":{{"device":1,"inode":2,"length":4096,"mtime_nanoseconds":3,"ctime_nanoseconds":4,"read_only":true}}}}"#,
+        r#"{{"db_path":"{}","id":"{evidence_id}","case_id":"{case_id}","description":"disk","source_path":"/tmp/disk.raw","source":{{"device":1,"inode":2,"length":4096,"mtime_seconds":10,"mtime_nanoseconds":3,"ctime_seconds":20,"ctime_nanoseconds":4,"read_only":true}}}}"#,
         path.display()
     );
     let mut response = ptr::null_mut();

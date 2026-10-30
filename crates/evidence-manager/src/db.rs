@@ -64,8 +64,9 @@ impl CaseStore {
                 "
                 INSERT INTO evidence (
                     id, case_id, description, source_path, device, inode, length,
-                    mtime_nanoseconds, ctime_nanoseconds, read_only, added_at
-                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+                    mtime_seconds, mtime_nanoseconds, ctime_seconds, ctime_nanoseconds,
+                    read_only, added_at
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
                 ",
                 params![
                     input.id.to_string(),
@@ -75,7 +76,9 @@ impl CaseStore {
                     device,
                     inode,
                     length,
+                    input.source.mtime_seconds,
                     input.source.mtime_nanoseconds,
+                    input.source.ctime_seconds,
                     input.source.ctime_nanoseconds,
                     input.source.read_only,
                     added_at.to_rfc3339()
@@ -100,7 +103,8 @@ impl CaseStore {
             .prepare(
                 "
                 SELECT id, case_id, description, source_path, device, inode, length,
-                       mtime_nanoseconds, ctime_nanoseconds, read_only, added_at
+                       mtime_seconds, mtime_nanoseconds, ctime_seconds, ctime_nanoseconds,
+                       read_only, added_at
                 FROM evidence
                 WHERE case_id = ?1
                 ORDER BY rowid
@@ -119,7 +123,7 @@ impl CaseStore {
 fn map_evidence_row(row: &Row<'_>) -> rusqlite::Result<EvidenceRecord> {
     let id: String = row.get(0)?;
     let case_id: String = row.get(1)?;
-    let added_at: String = row.get(10)?;
+    let added_at: String = row.get(12)?;
     Ok(EvidenceRecord {
         id: id.parse::<EvidenceId>().map_err(|error| {
             rusqlite::Error::FromSqlConversionFailure(
@@ -141,13 +145,15 @@ fn map_evidence_row(row: &Row<'_>) -> rusqlite::Result<EvidenceRecord> {
             device: i64_to_u64(row.get(4)?, 4)?,
             inode: i64_to_u64(row.get(5)?, 5)?,
             length: i64_to_u64(row.get(6)?, 6)?,
-            mtime_nanoseconds: row.get(7)?,
-            ctime_nanoseconds: row.get(8)?,
-            read_only: row.get(9)?,
+            mtime_seconds: row.get(7)?,
+            mtime_nanoseconds: row.get(8)?,
+            ctime_seconds: row.get(9)?,
+            ctime_nanoseconds: row.get(10)?,
+            read_only: row.get(11)?,
         },
         added_at: added_at.parse::<UtcTimestamp>().map_err(|error| {
             rusqlite::Error::FromSqlConversionFailure(
-                10,
+                12,
                 rusqlite::types::Type::Text,
                 Box::new(error),
             )

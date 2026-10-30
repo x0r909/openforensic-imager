@@ -107,6 +107,7 @@ pub struct AuditLog {
     file: File,
     last_sequence: u64,
     last_hash: Option<Sha256Digest>,
+    poisoned: bool,
 }
 
 impl AuditLog {
@@ -115,6 +116,7 @@ impl AuditLog {
             .create(true)
             .read(true)
             .append(true)
+            .mode(0o600)
             .custom_flags(libc::O_CLOEXEC)
             .open(path)
             .map_err(map_io)?;
@@ -125,10 +127,17 @@ impl AuditLog {
             file,
             last_sequence,
             last_hash,
+            poisoned: false,
         })
     }
 
     pub fn append(&mut self, event: AuditEvent) -> Result<AuditReceipt, AuditError> {
+        if self.poisoned {
+            return Err(AuditError::new(
+                AuditErrorCode::Corrupt,
+                "audit log is poisoned after an uncertain write",
+            ));
+        }
         let sequence = self
             .last_sequence
             .checked_add(1)
@@ -136,9 +145,18 @@ impl AuditLog {
         let record =
             chain::AuditRecord::new(sequence, UtcTimestamp::now(), self.last_hash.clone(), event);
         let record_hash = hash_record(&record)?;
-        append_record(&mut self.file, &record, &record_hash)?;
-        self.file.flush().map_err(map_io)?;
-        self.file.sync_data().map_err(map_io)?;
+        if let Err(error) = append_record(&mut self.file, &record, &record_hash) {
+            self.poisoned = true;
+            return Err(error);
+        }
+        if let Err(error) = self.file.flush() {
+            self.poisoned = true;
+            return Err(map_io(error));
+        }
+        if let Err(error) = self.file.sync_data() {
+            self.poisoned = true;
+            return Err(map_io(error));
+        }
         self.last_sequence = sequence;
         self.last_hash = Some(record_hash.clone());
         Ok(AuditReceipt {

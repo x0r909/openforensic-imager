@@ -73,7 +73,9 @@ fn phase1_case_evidence_hash_read_and_audit_round_trip() {
                     device: source.device(),
                     inode: source.inode(),
                     length: source.length(),
+                    mtime_seconds: source.mtime_seconds(),
                     mtime_nanoseconds: source.mtime_nanoseconds(),
+                    ctime_seconds: source.ctime_seconds(),
                     ctime_nanoseconds: source.ctime_nanoseconds(),
                     read_only: source.read_only(),
                 },
@@ -113,6 +115,8 @@ fn phase1_case_evidence_hash_read_and_audit_round_trip() {
     assert_eq!(evidence.len(), 1);
     assert_eq!(evidence[0].id, evidence_id);
     assert_eq!(evidence[0].source.length, 4096);
+    assert_eq!(evidence[0].source.mtime_seconds, source.mtime_seconds());
+    assert_eq!(evidence[0].source.ctime_seconds, source.ctime_seconds());
 
     let status = AuditLog::verify_chain(&audit_path).unwrap();
     assert!(status.is_valid(), "{:?}", status.reason());

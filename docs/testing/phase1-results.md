@@ -28,7 +28,7 @@ cargo test --workspace --no-run --message-format=json
 <run every emitted executable with --test-threads=1>
 ```
 
-Result: 17 test executables, 43 tests passed, 0 failed.
+Result: 17 test executables, 45 tests passed, 0 failed.
 
 ### Formatting
 
@@ -97,8 +97,8 @@ Result: exit 0.
 | Domain IDs and ranges | UUID round trips, boundary ranges, zero length, overflow, out-of-bounds |
 | Hashing | Empty and `abc` known vectors, randomized chunking property, coreutils SHA-256 comparison |
 | RAW reader | Missing file, empty image, full read, out-of-range read, symlink refusal, concurrent modification |
-| Evidence store | UTC timestamp, foreign key, duplicate case, duplicate evidence, reopen persistence |
-| Audit log | Monotonic sequence, hash links, UTF-8 escaping, lock contention, reopen, edit/reorder/delete/truncate tamper |
+| Evidence store | UTC timestamp, foreign key, duplicate case, duplicate evidence, reopen persistence, full mtime and ctime seconds and nanos |
+| Audit log | Monotonic sequence, hash links, UTF-8 escaping, owner-only mode, lock contention, write-failure poisoning, reopen, edit/reorder/delete/truncate tamper |
 | C ABI | Version, null and oversized inputs, invalid JSON, owned responses, panic containment |
 | Fixtures | Empty, dense, sparse, split, deterministic hashes, committed manifest vector |
 | Integration | Case and evidence creation, hash, RAW read, source unchanged, audit chain reopen |
@@ -117,6 +117,9 @@ Result: exit 0.
 - The RAW sector size defaults to 512 bytes because RAW has no authoritative
   sector-size metadata. Callers may supply a verified value in a later metadata
   layer.
+- Block-device capacity uses `BLKGETSIZE64`, but the host did not expose a
+  readable test block device, so that branch has compile and review coverage but
+  no executable integration test yet.
 - The audit hash chain is tamper-evident for ordinary edits, reordering, and
   truncation. It cannot defend against an attacker who can rewrite the entire
   chain.

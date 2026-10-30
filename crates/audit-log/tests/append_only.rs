@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 
 use audit_log::{AuditErrorCode, AuditEvent, AuditLog};
@@ -168,4 +169,26 @@ fn truncated_record_breaks_the_chain() {
     let status = AuditLog::verify_chain(&path).unwrap();
 
     assert!(!status.is_valid());
+}
+
+#[test]
+fn new_audit_log_is_owner_only() {
+    let directory = tempdir().unwrap();
+    let path = directory.path().join("audit.jsonl");
+    let _log = AuditLog::open_append(&path).unwrap();
+
+    let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+
+    assert_eq!(mode, 0o600);
+}
+
+#[test]
+fn write_failure_poisoning_prevents_duplicate_sequence_retry() {
+    let mut log = AuditLog::open_append(Path::new("/dev/full")).unwrap();
+
+    let first = log.append(event("case.created")).unwrap_err();
+    let second = log.append(event("evidence.added")).unwrap_err();
+
+    assert_eq!(first.code(), AuditErrorCode::Io);
+    assert_eq!(second.code(), AuditErrorCode::Corrupt);
 }

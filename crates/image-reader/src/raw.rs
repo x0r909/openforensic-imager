@@ -12,6 +12,7 @@ use crate::source::{
 };
 
 const DEFAULT_SECTOR_SIZE: u32 = 512;
+const BLKGETSIZE64: libc::c_ulong = 0x8008_1272;
 
 #[derive(Debug)]
 pub struct RawReader {
@@ -110,14 +111,37 @@ fn capture_fingerprint(
         ));
     }
 
+    let length = source_length(file, metadata)?;
+
     Ok(SourceFingerprint::new(
         metadata.dev(),
         metadata.ino(),
-        metadata.len(),
+        length,
         (metadata.mtime(), metadata.mtime_nsec()),
         (metadata.ctime(), metadata.ctime_nsec()),
         read_only,
     ))
+}
+
+fn source_length(file: &File, metadata: &std::fs::Metadata) -> Result<u64, ImageError> {
+    if !metadata.file_type().is_block_device() {
+        return Ok(metadata.len());
+    }
+
+    let mut length = 0_u64;
+    // The descriptor remains owned by `file`; the ioctl only reads capacity.
+    let result = unsafe {
+        libc::ioctl(
+            std::os::fd::AsRawFd::as_raw_fd(file),
+            BLKGETSIZE64,
+            &mut length,
+        )
+    };
+    if result == 0 {
+        Ok(length)
+    } else {
+        Err(map_io_error(io::Error::last_os_error()))
+    }
 }
 
 fn map_open_error(error: io::Error) -> ImageError {

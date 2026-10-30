@@ -29,7 +29,9 @@ pub(crate) fn apply(connection: &mut Connection) -> Result<()> {
             device INTEGER NOT NULL,
             inode INTEGER NOT NULL,
             length INTEGER NOT NULL,
+            mtime_seconds INTEGER NOT NULL,
             mtime_nanoseconds INTEGER NOT NULL,
+            ctime_seconds INTEGER NOT NULL,
             ctime_nanoseconds INTEGER NOT NULL,
             read_only INTEGER NOT NULL CHECK (read_only IN (0, 1)),
             added_at TEXT NOT NULL

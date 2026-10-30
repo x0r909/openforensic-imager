@@ -54,8 +54,16 @@ impl SourceFingerprint {
         self.length
     }
 
+    pub fn mtime_seconds(&self) -> i64 {
+        self.mtime_seconds
+    }
+
     pub fn mtime_nanoseconds(&self) -> i64 {
         self.mtime_nanoseconds
+    }
+
+    pub fn ctime_seconds(&self) -> i64 {
+        self.ctime_seconds
     }
 
     pub fn ctime_nanoseconds(&self) -> i64 {

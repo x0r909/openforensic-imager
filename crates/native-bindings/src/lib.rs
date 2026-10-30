@@ -204,7 +204,7 @@ unsafe fn run_adapter(
 
     let outcome = catch_unwind(AssertUnwindSafe(|| {
         let request = unsafe { request_bytes(request, request_len)? };
-        handler(request)
+        handler(&request)
     }));
 
     match outcome {
@@ -241,7 +241,7 @@ unsafe fn run_adapter(
     }
 }
 
-unsafe fn request_bytes<'a>(request: *const u8, request_len: usize) -> Result<&'a [u8], FfiError> {
+unsafe fn request_bytes(request: *const u8, request_len: usize) -> Result<Vec<u8>, FfiError> {
     if request.is_null() || request_len == 0 || request_len > MAX_REQUEST_BYTES {
         return Err(FfiError {
             status: ofi_status::OFI_STATUS_INVALID_ARGUMENT,
@@ -249,7 +249,7 @@ unsafe fn request_bytes<'a>(request: *const u8, request_len: usize) -> Result<&'
             message: "request must be a non-empty bounded byte string".to_owned(),
         });
     }
-    Ok(unsafe { std::slice::from_raw_parts(request, request_len) })
+    Ok(unsafe { std::slice::from_raw_parts(request, request_len) }.to_vec())
 }
 
 fn handle_case_create(request: &[u8]) -> Result<Vec<u8>, FfiError> {

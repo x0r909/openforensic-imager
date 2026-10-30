@@ -32,7 +32,9 @@ fn add_evidence(store: &CaseStore) -> evidence_manager::EvidenceRecord {
                 device: 1,
                 inode: 2,
                 length: 4096,
+                mtime_seconds: 10,
                 mtime_nanoseconds: 3,
+                ctime_seconds: 20,
                 ctime_nanoseconds: 4,
                 read_only: true,
             },
@@ -67,7 +69,9 @@ fn evidence_for_missing_case_is_rejected_by_foreign_key_policy() {
                 device: 1,
                 inode: 2,
                 length: 3,
+                mtime_seconds: 4,
                 mtime_nanoseconds: 4,
+                ctime_seconds: 5,
                 ctime_nanoseconds: 5,
                 read_only: true,
             },
@@ -111,7 +115,9 @@ fn duplicate_evidence_id_is_rejected_without_partial_insert() {
                 device: 9,
                 inode: 8,
                 length: 7,
+                mtime_seconds: 6,
                 mtime_nanoseconds: 6,
+                ctime_seconds: 7,
                 ctime_nanoseconds: 5,
                 read_only: true,
             },
@@ -138,5 +144,7 @@ fn reopening_preserves_evidence_identifier_and_source_snapshot() {
     assert_eq!(evidence.len(), 1);
     assert_eq!(evidence[0].id, evidence_id());
     assert_eq!(evidence[0].source.length, 4096);
+    assert_eq!(evidence[0].source.mtime_seconds, 10);
+    assert_eq!(evidence[0].source.ctime_seconds, 20);
     assert!(evidence[0].source.read_only);
 }

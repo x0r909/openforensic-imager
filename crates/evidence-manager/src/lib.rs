@@ -28,7 +28,9 @@ pub struct SourceSnapshot {
     pub device: u64,
     pub inode: u64,
     pub length: u64,
+    pub mtime_seconds: i64,
     pub mtime_nanoseconds: i64,
+    pub ctime_seconds: i64,
     pub ctime_nanoseconds: i64,
     pub read_only: bool,
 }
