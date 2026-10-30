@@ -15,6 +15,7 @@ use extraction::{ExtractionOptions, Extractor};
 use filesystem::{EvidenceFile, FileSystem};
 use forensic_core::{CaseId, EvidenceId, JobId};
 use hashing::HashAlgorithm;
+use image_reader::open_image;
 use job_manager::{JobError, JobManager, JobOutcome};
 use partition_analyzer::analyze_partitions;
 use reporting::write_extraction_report_set;
@@ -64,6 +65,9 @@ struct EvidenceAddRequest {
 #[derive(Deserialize)]
 #[serde(tag = "operation", rename_all = "snake_case")]
 enum JobRequest {
+    ImageIdentify {
+        path: String,
+    },
     PartitionAnalysis {
         path: String,
     },
@@ -71,6 +75,10 @@ enum JobRequest {
         path: String,
         offset_bytes: u64,
         inode: u64,
+    },
+    FilesystemOpen {
+        path: String,
+        offset_bytes: u64,
     },
     Verification {
         path: String,
@@ -587,6 +595,11 @@ unsafe fn job_manager_and_id<'a>(
 fn handle_job_submit(manager: &JobManager, request: &[u8]) -> Result<Vec<u8>, FfiError> {
     let request: JobRequest = parse_request(request)?;
     let job_id = match request {
+        JobRequest::ImageIdentify { path } => manager.submit("image_identify", move |_| {
+            let image = open_image(Path::new(&path))
+                .map_err(|error| JobError::failed("image.open", error.to_string()))?;
+            job_success(image.metadata())
+        }),
         JobRequest::PartitionAnalysis { path } => manager.submit("partition_analysis", move |_| {
             let analysis = analyze_partitions(Path::new(&path))
                 .map_err(|error| JobError::failed("partition.failed", error.to_string()))?;
@@ -609,6 +622,18 @@ fn handle_job_submit(manager: &JobManager, request: &[u8]) -> Result<Vec<u8>, Ff
                 "entries": entries,
             }))
         }),
+        JobRequest::FilesystemOpen { path, offset_bytes } => {
+            manager.submit("filesystem_open", move |_| {
+                let filesystem = FileSystem::open(Path::new(&path), offset_bytes)
+                    .map_err(|error| JobError::failed("filesystem.open", error.to_string()))?;
+                job_success(json!({
+                    "kind": filesystem.kind(),
+                    "block_size": filesystem.block_size(),
+                    "inode_count": filesystem.inode_count(),
+                    "root_inode": filesystem.root_inode(),
+                }))
+            })
+        }
         JobRequest::Verification {
             path,
             algorithms,

@@ -476,6 +476,7 @@ dependencies = [
  "filesystem",
  "forensic-core",
  "hashing",
+ "image-reader",
  "job-manager",
  "partition-analyzer",
  "reporting",

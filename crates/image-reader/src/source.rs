@@ -78,7 +78,7 @@ impl SourceFingerprint {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ImageMetadata {
     pub format: ImageFormat,
     pub logical_length: u64,

@@ -40,6 +40,8 @@ and verified on the local workspace:
 - C ABI 1.1 job submission, snapshot, cancellation, partition analysis,
   filesystem listing, verification, acquisition, bounded preview, signature
   identification, single-file extraction, and directory extraction reports.
+- Qt 6 desktop shell with QML evidence tree, file list, properties, viewer,
+  task panel, and working light/dark themes.
 
 Architecture and review gates:
 
@@ -147,6 +149,8 @@ build.
   viewer, signature, extraction, report, and security evidence.
 - [docs/testing/phase5-background-jobs.md](docs/testing/phase5-background-jobs.md):
   Phase 5 job-state, cancellation, progress, and panic-containment evidence.
+- [docs/testing/phase5-ui-results.md](docs/testing/phase5-ui-results.md): Phase 5
+  Qt shell, QML model, theme, keyboard, and CTest evidence.
 - [SECURITY_MODEL.md](SECURITY_MODEL.md): threat model and mandatory controls.
 - [docs/reverse-engineering/](docs/reverse-engineering/): FTK Imager evidence,
   limitations, and compatibility status.

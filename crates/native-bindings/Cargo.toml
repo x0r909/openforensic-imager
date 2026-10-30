@@ -15,6 +15,7 @@ extraction = { path = "../extraction" }
 filesystem = { path = "../filesystem" }
 forensic-core = { path = "../forensic-core" }
 hashing = { path = "../hashing" }
+image-reader = { path = "../image-reader" }
 job-manager = { path = "../job-manager" }
 partition-analyzer = { path = "../partition-analyzer" }
 reporting = { path = "../reporting" }
