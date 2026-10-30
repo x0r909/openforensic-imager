@@ -3,6 +3,7 @@ resolver = "3"
 members = [
     "crates/forensic-core",
     "crates/hashing",
+    "crates/image-reader",
 ]
 
 [workspace.package]
@@ -12,10 +13,12 @@ rust-version = "1.93"
 
 [workspace.dependencies]
 digest = "0.11"
+libc = "0.2"
 md-5 = "0.11"
 proptest = "1"
 serde = { version = "1", features = ["derive"] }
 sha1 = "0.11"
 sha2 = "0.11"
+tempfile = "3"
 uuid = { version = "1", features = ["serde", "v4"] }
 
