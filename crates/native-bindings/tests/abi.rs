@@ -479,3 +479,90 @@ fn preview_and_extraction_jobs_return_bounded_results() {
     );
     unsafe { ofi_job_manager_free(manager) };
 }
+
+#[test]
+fn directory_extraction_job_writes_reports() {
+    let directory = tempdir().unwrap();
+    let image = directory.path().join("directory.raw");
+    std::fs::File::create(&image)
+        .unwrap()
+        .set_len(64 * 1024 * 1024)
+        .unwrap();
+    let output = Command::new("mke2fs")
+        .args(["-q", "-F", "-t", "ext4", "-L", "DIRJOB"])
+        .arg(&image)
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    for (name, content) in [("first.txt", "first"), ("second.txt", "second")] {
+        let source = directory.path().join(name);
+        std::fs::write(&source, content).unwrap();
+        let output = Command::new("debugfs")
+            .args(["-w", "-R"])
+            .arg(format!("write {} /{name}", source.display()))
+            .arg(&image)
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+    }
+    let mut manager: *mut ofi_job_manager = ptr::null_mut();
+    let mut error = ptr::null_mut();
+    assert_eq!(
+        unsafe { ofi_job_manager_new(1, &mut manager, &mut error) },
+        ofi_status::OFI_STATUS_OK
+    );
+    let export_root = directory.path().join("export");
+    let reports_root = directory.path().join("reports");
+    std::fs::create_dir(&reports_root).unwrap();
+
+    let id = unsafe {
+        submit_request(
+            manager,
+            &serde_json::json!({
+                "operation": "extract_directory",
+                "path": image,
+                "offset_bytes": 0,
+                "inode": 2,
+                "directory_name": "files",
+                "destination_root": export_root,
+                "reports_dir": reports_root,
+                "base_name": "directory-export",
+            }),
+        )
+    };
+    let snapshot = unsafe { wait_for_job(manager, &id) };
+
+    assert_eq!(snapshot["body"]["status"], "succeeded");
+    assert_eq!(snapshot["body"]["result"]["manifest"]["status"], "complete");
+    assert_eq!(
+        snapshot["body"]["result"]["manifest"]["records"]
+            .as_array()
+            .unwrap()
+            .len(),
+        2
+    );
+    assert_eq!(
+        std::fs::read(export_root.join("files/first.txt")).unwrap(),
+        b"first"
+    );
+    assert_eq!(
+        std::fs::read(export_root.join("files/second.txt")).unwrap(),
+        b"second"
+    );
+    assert!(
+        reports_root
+            .join("directory-export.extraction.json")
+            .exists()
+    );
+    assert!(
+        reports_root
+            .join("directory-export.extraction.csv")
+            .exists()
+    );
+    assert!(
+        reports_root
+            .join("directory-export.extraction.html")
+            .exists()
+    );
+    unsafe { ofi_job_manager_free(manager) };
+}

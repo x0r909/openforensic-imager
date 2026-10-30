@@ -39,7 +39,7 @@ and verified on the local workspace:
   panic containment.
 - C ABI 1.1 job submission, snapshot, cancellation, partition analysis,
   filesystem listing, verification, acquisition, bounded preview, signature
-  identification, and single-file extraction.
+  identification, single-file extraction, and directory extraction reports.
 
 Architecture and review gates:
 

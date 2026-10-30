@@ -9,7 +9,7 @@ use extraction::ExtractionManifest;
 use forensic_core::UtcTimestamp;
 use serde::Serialize;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ReportPaths {
     pub json: PathBuf,
     pub csv: PathBuf,

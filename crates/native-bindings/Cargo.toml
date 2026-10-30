@@ -17,6 +17,7 @@ forensic-core = { path = "../forensic-core" }
 hashing = { path = "../hashing" }
 job-manager = { path = "../job-manager" }
 partition-analyzer = { path = "../partition-analyzer" }
+reporting = { path = "../reporting" }
 viewer = { path = "../viewer" }
 serde.workspace = true
 serde_json.workspace = true

@@ -17,6 +17,8 @@ Date: 2026-10-30
   and acquisition.
 - C ABI job dispatch for bounded hex/text preview, signature identification, and
   single-file extraction.
+- C ABI directory extraction with a partial/success manifest and JSON, CSV, and
+  HTML extraction reports.
 
 ## Verification evidence
 
@@ -28,7 +30,7 @@ CARGO_TARGET_DIR=target/verify-tests cargo test --workspace --no-run --message-f
 
 Every emitted test executable was run with `--test-threads=1`.
 
-Result: 39 test executables, 117 tests passed, 0 failed.
+Result: 39 test executables, 118 tests passed, 0 failed.
 
 The C ABI smoke harness also compiles with `-Wall -Wextra -Werror` and exits 0
 after creating and releasing a job manager.
@@ -40,5 +42,5 @@ after creating and releasing a job manager.
   worker RPC remain Phase 6 work.
 - Completed job records are retained for the process lifetime. Persistence,
   retention, and case-database integration remain future work.
-- The C ABI job dispatcher does not yet expose directory extraction or report
-  generation.
+- The C ABI job dispatcher does not yet expose acquisition/verification report
+  generation, evidence inventory, or examination-history reports.

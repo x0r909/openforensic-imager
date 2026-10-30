@@ -17,6 +17,7 @@ use forensic_core::{CaseId, EvidenceId, JobId};
 use hashing::HashAlgorithm;
 use job_manager::{JobError, JobManager, JobOutcome};
 use partition_analyzer::analyze_partitions;
+use reporting::write_extraction_report_set;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use viewer::{ByteSource, SourceError, hex_page, identify_signature, preview_text};
@@ -108,6 +109,15 @@ enum JobRequest {
         parent_inode: u64,
         metadata_address: u64,
         destination_root: String,
+    },
+    ExtractDirectory {
+        path: String,
+        offset_bytes: u64,
+        inode: u64,
+        directory_name: String,
+        destination_root: String,
+        reports_dir: String,
+        base_name: String,
     },
 }
 
@@ -718,6 +728,46 @@ fn handle_job_submit(manager: &JobManager, request: &[u8]) -> Result<Vec<u8>, Ff
                 .extract_file(&filesystem, &entry)
                 .map_err(|error| JobError::failed("extraction.file", error.to_string()))?;
             job_success(record)
+        }),
+        JobRequest::ExtractDirectory {
+            path,
+            offset_bytes,
+            inode,
+            directory_name,
+            destination_root,
+            reports_dir,
+            base_name,
+        } => manager.submit("extract_directory", move |_| {
+            let filesystem = FileSystem::open(Path::new(&path), offset_bytes)
+                .map_err(|error| JobError::failed("filesystem.open", error.to_string()))?;
+            let mut extractor =
+                Extractor::create(Path::new(&destination_root), ExtractionOptions::default())
+                    .map_err(|error| JobError::failed("extraction.root", error.to_string()))?;
+            let manifest = extractor
+                .extract_directory(&filesystem, inode, &directory_name)
+                .map_err(|error| JobError::failed("extraction.directory", error.to_string()))?;
+            let report_paths =
+                write_extraction_report_set(Path::new(&reports_dir), &base_name, &manifest)
+                    .map_err(|error| {
+                        JobError::failed("extraction.report", error.message().to_owned())
+                    })?;
+            let status = manifest.status;
+            let result = job_value(serde_json::json!({
+                "manifest": manifest,
+                "reports": {
+                    "json": report_paths.json,
+                    "csv": report_paths.csv,
+                    "html": report_paths.html,
+                },
+            }))?;
+            if status == extraction::ManifestStatus::Partial {
+                Ok(JobOutcome::partial(
+                    result,
+                    "directory extraction completed with failed entries",
+                ))
+            } else {
+                Ok(JobOutcome::succeeded(result))
+            }
         }),
     }
     .map_err(job_submit_error)?;

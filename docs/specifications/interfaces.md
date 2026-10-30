@@ -256,6 +256,24 @@ Preview and extraction operations:
 Preview length is capped at 64 KiB. Extraction requires the parent inode so the
 evidence name is resolved from a directory entry, not invented from metadata.
 
+Directory extraction additionally accepts a reports directory and base name:
+
+```json
+{
+  "operation": "extract_directory",
+  "path": "/evidence/disk.E01",
+  "offset_bytes": 1048576,
+  "inode": 2,
+  "directory_name": "files",
+  "destination_root": "/cases/2026-001/exports",
+  "reports_dir": "/cases/2026-001/reports",
+  "base_name": "directory-export"
+}
+```
+
+The job returns the extraction manifest and all three report paths. A manifest
+with any failed entry is reported as a partial job, never as success.
+
 ## Viewer page
 
 ```json
