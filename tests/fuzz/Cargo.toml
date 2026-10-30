@@ -1,0 +1,29 @@
+[package]
+name = "openforensic-fuzz"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+native-bindings = { path = "../../crates/native-bindings" }
+viewer = { path = "../../crates/viewer" }
+
+[[bin]]
+name = "viewer_pages"
+path = "fuzz_targets/viewer_pages.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "c_abi_json"
+path = "fuzz_targets/c_abi_json.rs"
+test = false
+doc = false
+bench = false

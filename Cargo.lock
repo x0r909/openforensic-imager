@@ -471,6 +471,7 @@ name = "native-bindings"
 version = "0.1.0"
 dependencies = [
  "acquisition",
+ "audit-log",
  "evidence-manager",
  "extraction",
  "filesystem",
@@ -480,6 +481,7 @@ dependencies = [
  "image-reader",
  "job-manager",
  "partition-analyzer",
+ "proptest",
  "reporting",
  "serde",
  "serde_json",
@@ -651,6 +653,7 @@ name = "reporting"
 version = "0.1.0"
 dependencies = [
  "acquisition",
+ "audit-log",
  "extraction",
  "forensic-core",
  "forensic-fixtures",
@@ -658,6 +661,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "uuid",
 ]
 
 [[package]]
@@ -1050,6 +1054,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "23b97319f7b8343df12cc98938e5c3eb436064524c8d2b4e30a1d3a36eecdf81"
 dependencies = [
  "memchr",
+]
+
+[[package]]
+name = "worker-sandbox"
+version = "0.1.0"
+dependencies = [
+ "libc",
+ "tempfile",
 ]
 
 [[package]]

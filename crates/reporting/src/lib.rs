@@ -5,6 +5,7 @@ use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 
 use acquisition::{AcquisitionManifest, VerificationReport};
+use audit_log::AuditChainStatus;
 use extraction::ExtractionManifest;
 use forensic_core::UtcTimestamp;
 use serde::Serialize;
@@ -153,6 +154,117 @@ pub fn write_verification_report_set(
     write_owner_only(&paths.csv, csv.as_bytes())?;
     write_owner_only(&paths.html, html.as_bytes())?;
     Ok(paths)
+}
+
+pub fn write_audit_report_set(
+    output_dir: &Path,
+    base_name: &str,
+    audit_path: &Path,
+    status: &AuditChainStatus,
+) -> Result<ReportPaths, ReportError> {
+    validate_output(output_dir, base_name)?;
+    let bundle = AuditReportBundle {
+        schema_version: 1,
+        generated_at: UtcTimestamp::now(),
+        audit_path: audit_path.display().to_string(),
+        status,
+        limitation: "A local hash chain detects accidental edits and simple reordering. \
+            It is not externally notarized and does not protect against an attacker who \
+            rewrites the entire chain and recorded head.",
+    };
+    let json = serde_json::to_vec_pretty(&bundle)
+        .map_err(|error| ReportError::new(format!("JSON report failed: {error}")))?;
+    let csv = render_audit_csv(audit_path, status);
+    let html = render_audit_html(audit_path, status);
+    let paths = ReportPaths {
+        json: output_dir.join(format!("{base_name}.audit.json")),
+        csv: output_dir.join(format!("{base_name}.audit.csv")),
+        html: output_dir.join(format!("{base_name}.audit.html")),
+    };
+    write_owner_only(&paths.json, &json)?;
+    write_owner_only(&paths.csv, csv.as_bytes())?;
+    write_owner_only(&paths.html, html.as_bytes())?;
+    Ok(paths)
+}
+
+#[derive(Serialize)]
+struct AuditReportBundle<'a> {
+    schema_version: u32,
+    generated_at: UtcTimestamp,
+    audit_path: String,
+    status: &'a AuditChainStatus,
+    limitation: &'static str,
+}
+
+fn render_audit_csv(audit_path: &Path, status: &AuditChainStatus) -> String {
+    let mut output = String::from("section,field,value\n");
+    csv_row(
+        &mut output,
+        "audit",
+        "path",
+        &audit_path.display().to_string(),
+    );
+    csv_row(
+        &mut output,
+        "audit",
+        "valid",
+        if status.is_valid() { "true" } else { "false" },
+    );
+    csv_row(
+        &mut output,
+        "audit",
+        "record_count",
+        &status.record_count().to_string(),
+    );
+    csv_row(
+        &mut output,
+        "audit",
+        "head_hash",
+        status.head_hash().map_or("", |hash| hash.to_hex()),
+    );
+    csv_row(
+        &mut output,
+        "audit",
+        "reason",
+        status.reason().unwrap_or(""),
+    );
+    csv_row(
+        &mut output,
+        "audit",
+        "limitation",
+        "local hash chain, not externally notarized",
+    );
+    output
+}
+
+fn render_audit_html(audit_path: &Path, status: &AuditChainStatus) -> String {
+    let mut output = String::new();
+    output.push_str("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">");
+    output.push_str("<title>OpenForensic Imager Audit Report</title></head><body>");
+    output.push_str("<h1>OpenForensic Imager Audit Report</h1><table>");
+    html_row(&mut output, "Audit path", &audit_path.display().to_string());
+    html_row(
+        &mut output,
+        "Valid",
+        if status.is_valid() { "true" } else { "false" },
+    );
+    html_row(
+        &mut output,
+        "Record count",
+        &status.record_count().to_string(),
+    );
+    html_row(
+        &mut output,
+        "Head hash",
+        status.head_hash().map_or("", |hash| hash.to_hex()),
+    );
+    html_row(&mut output, "Reason", status.reason().unwrap_or("none"));
+    output.push_str(
+        "</table><p>This is a local hash chain, not an externally notarized \
+        record. It detects accidental edits and simple reordering but not a full rewrite \
+        by an attacker with access to the case directory.</p></body></html>",
+    );
+    output
 }
 
 #[derive(Serialize)]

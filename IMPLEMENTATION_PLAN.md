@@ -6,7 +6,8 @@
 > checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Deliver a tested Linux-native forensic acquisition and analysis
-application, beginning with Phase 1 only.
+application, with Phases 1 through 6 implemented and their remaining release
+blockers documented.
 
 **Architecture:** Rust libraries provide integrity-critical domain logic,
 persistence, hashing, image access, and reporting. A C ABI connects them to a
@@ -373,6 +374,37 @@ views, and full accessibility-tree testing remain open.
 5. Source-write and extraction-race validation.
 6. Capacity and soak tests.
 7. Security review and limitation report.
+
+### Phase 6 status
+
+- [x] Add JSON, CSV, and HTML audit reports with chain status and an explicit
+  non-notarization limitation.
+- [x] Add `audit_append` and `audit_verify` ABI jobs.
+- [x] Preflight audit-log open before case and evidence database commits.
+- [x] Add MBR, GPT, ext4, RAW/E01, and SHA-256 differential tests.
+- [x] Replace the side-effecting ABI fuzz target with a side-effect-free request
+  parser target.
+- [x] Run five-second `cargo-fuzz` smoke tests for the viewer and ABI JSON
+  targets with sanitizers disabled.
+- [x] Add Landlock and seccomp negative tests in a forked child.
+- [x] Add a `strace` regression test proving acquisition opens the source with
+  `O_RDONLY`.
+- [x] Add 64 repeated extraction-root replacement iterations.
+- [x] Add a sparse 8 GiB bounded-memory random-read test.
+- [x] Record the 45-binary, 143-test workspace result, CTest result, vulnerability
+  audit, and limitations in
+  [docs/testing/phase6-results.md](docs/testing/phase6-results.md).
+- [x] Record open security findings and residual risk in
+  [docs/security/phase6-review.md](docs/security/phase6-review.md).
+- [ ] Wire the tested worker sandbox into parser dispatch. This is a high
+  security release blocker.
+- [ ] Run ASan, MSan, and a scheduled fuzz budget on nightly Rust. This host has
+  no rustup or nightly toolchain.
+- [ ] Run multi-terabyte acquisition and long-duration soak tests on release
+  hardware.
+
+Phase 6 validation is complete at the executable coverage level. The production
+security gate and Phase 7 packaging gate remain open.
 
 ## Phase 7 execution outline
 

@@ -5,8 +5,9 @@ Linux-native digital forensics acquisition and evidence analysis platform.
 ## Current status
 
 Phase 0 is complete. Phase 1 core, Phase 2 acquisition/verification, Phase 3
-partition/filesystem analysis, and Phase 4 viewer/extraction are implemented
-and verified on the local workspace:
+partition/filesystem analysis, Phase 4 viewer/extraction, and Phase 5 desktop
+workflows are implemented. Phase 6 validation has executable security,
+differential, audit, fuzz, race, and capacity evidence on the local workspace:
 
 - Rust workspace and domain primitives.
 - Streaming MD5, SHA-1, SHA-256, and SHA-512 hashing.
@@ -42,6 +43,17 @@ and verified on the local workspace:
   identification, single-file extraction, and directory extraction reports.
 - Qt 6 desktop shell with QML evidence tree, file list, properties, viewer,
   task panel, case/acquisition panel, and working light/dark themes.
+- Audit chain verification and JSON, CSV, and HTML audit reports.
+- Audit-open preflight before case or evidence database commits.
+- Desktop case and evidence writes use an adjacent `audit.jsonl` in the case
+  database directory.
+- Landlock and seccomp negative tests for a reusable analysis-worker sandbox.
+- Side-effect-free C ABI JSON and viewer fuzz targets plus stable property tests.
+- MBR, GPT, ext4, RAW/E01, and SHA-256 differential checks.
+- Source-open syscall tracing that proves the acquisition path uses read-only
+  source descriptors.
+- Repeated extraction-root replacement tests and sparse 8 GiB bounded-memory
+  random-access reads.
 
 Architecture and review gates:
 
@@ -51,11 +63,13 @@ Architecture and review gates:
 - [SECURITY_MODEL.md](SECURITY_MODEL.md)
 - [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)
 
-The verified Phase 1 through Phase 4 results are documented in
+The verified Phase 1 through Phase 6 results are documented in
 [docs/testing/phase1-results.md](docs/testing/phase1-results.md),
 [docs/testing/phase2-results.md](docs/testing/phase2-results.md), and
 [docs/testing/phase3-results.md](docs/testing/phase3-results.md), plus
-[docs/testing/phase4-results.md](docs/testing/phase4-results.md). The detailed
+[docs/testing/phase4-results.md](docs/testing/phase4-results.md),
+[docs/testing/phase5-ui-results.md](docs/testing/phase5-ui-results.md), and
+[docs/testing/phase6-results.md](docs/testing/phase6-results.md). The detailed
 feasibility findings are in [FEASIBILITY_REPORT.md](FEASIBILITY_REPORT.md) and
 [docs/reverse-engineering/](docs/reverse-engineering/).
 
@@ -122,9 +136,12 @@ investigation input only. It must not be committed or redistributed.
 
 ## Implementation gate
 
-Phases 1 through 4 are complete at the core-library level. Phase 5 background
-job infrastructure is implemented; the Qt desktop shell and sandboxed preview
-renderer remain. The release dependency gate remains the pinned TSK and libewf
+Phases 1 through 5 are implemented at the core and desktop-workflow level.
+Phase 6 controls and tests are implemented, but the production release gate is
+not yet passed. The analysis worker sandbox exists as a tested crate and is not
+yet wired into the desktop parser dispatch path. Sanitizer and scheduled fuzz
+runs also remain open. Packaging and reproducible clean-system installation are
+Phase 7 work. The release dependency gate remains the pinned TSK and libewf
 build.
 
 ## Documentation map
@@ -151,6 +168,11 @@ build.
   Phase 5 job-state, cancellation, progress, and panic-containment evidence.
 - [docs/testing/phase5-ui-results.md](docs/testing/phase5-ui-results.md): Phase 5
   Qt shell, QML model, theme, keyboard, and CTest evidence.
+- [docs/testing/phase6-results.md](docs/testing/phase6-results.md): Phase 6
+  audit, fuzz smoke, differential, race, source-open, capacity, and CTest
+  evidence.
+- [docs/security/phase6-review.md](docs/security/phase6-review.md): Phase 6
+  security findings, open release blockers, and residual risks.
 - [SECURITY_MODEL.md](SECURITY_MODEL.md): threat model and mandatory controls.
 - [docs/reverse-engineering/](docs/reverse-engineering/): FTK Imager evidence,
   limitations, and compatibility status.

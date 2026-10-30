@@ -131,6 +131,7 @@ private:
     void listDirectory(quint64 inode, const QString &label);
     void loadPreview(const QVariantMap &entry, const QString &tab);
     QString currentImageId() const;
+    QString caseAuditPath() const;
 
     AbiClient m_abi;
     EvidenceTreeModel m_evidence;

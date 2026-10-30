@@ -1,5 +1,8 @@
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QSignalSpy>
+#include <QTemporaryDir>
+#include <QUuid>
 #include <QtTest>
 
 #include "app_controller.h"
@@ -18,6 +21,7 @@ private slots:
     void taskModelUpdatesProgress();
     void viewerRendersHexRows();
     void viewerRejectsBinaryText();
+    void caseCreationWritesAuditLog();
 };
 
 void ModelTests::evidenceTreeStartsEmpty() {
@@ -170,6 +174,22 @@ void ModelTests::viewerRejectsBinaryText() {
                               {QStringLiteral("text"), QString()}});
 
     QVERIFY(model.text().contains(QStringLiteral("Binary content")));
+}
+
+void ModelTests::caseCreationWritesAuditLog() {
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    AppController controller;
+    QSignalSpy errors(&controller, &AppController::errorRaised);
+    controller.setCaseDatabasePath(directory.filePath(QStringLiteral("case.db")));
+    controller.setCaseId(QUuid::createUuid().toString(QUuid::WithoutBraces));
+
+    controller.createCase();
+
+    QCOMPARE(errors.count(), 0);
+    QFile audit(directory.filePath(QStringLiteral("audit.jsonl")));
+    QVERIFY(audit.open(QIODevice::ReadOnly));
+    QVERIFY(audit.readAll().contains("case.created"));
 }
 
 QTEST_MAIN(ModelTests)

@@ -284,3 +284,29 @@ isolated worker, enforce the same pixel and byte limits, and receive only the
 bounded preview plan or staged bytes. High-frequency race stress, fuzzing, and
 worker sandbox verification remain Phase 6 gates.
 
+## 16. Phase 6 validation status
+
+The following controls now have executable negative or differential evidence:
+
+- Landlock denies reads outside the allowlist and denies writes without a grant.
+- seccomp denies network sockets and process creation in the sandbox child.
+- Acquisition source opens are traced as read-only.
+- Extraction stays under the opened capability root across repeated path
+  replacement.
+- Audit tampering, reordering, deletion, truncation, and concurrent writers are
+  detected or rejected.
+- Arbitrary C ABI JSON and viewer bytes are covered by stable property tests and
+  short fuzz smoke runs.
+
+The tested sandbox crate is not yet connected to parser dispatch. TSK, libewf,
+filesystem, and viewer parsing still execute in the desktop process. This is an
+open high-severity architecture and release blocker. Sanitizer coverage and a
+scheduled fuzz budget are also not available on the current stable-only host.
+
+Audit-log open is preflighted before case or evidence database commits. A write
+failure after those commits is surfaced as `audit.append_after_commit`; there is
+no atomic transaction across SQLite and the JSONL audit file.
+
+See [docs/security/phase6-review.md](docs/security/phase6-review.md) for the full
+finding list and release-gate decision.
+

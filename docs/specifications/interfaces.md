@@ -165,7 +165,53 @@ Job states:
 
 ## Job submission
 
-The C ABI job manager accepts these JSON operation bodies:
+ABI minor version 1 adds the operations listed below. The C ABI parser first
+decodes the complete request without running it. The same parser is used by the
+side-effect-free stable property test and fuzz target.
+
+| Operation | Purpose |
+|---|---|
+| `image_identify` | Identify RAW, EWF1, or a supported image and return metadata. |
+| `partition_analysis` | Parse MBR or GPT through TSK. |
+| `filesystem_open` | Open a filesystem at a byte offset and return volume metadata. |
+| `filesystem_list` | List a directory inode. |
+| `source_snapshot` | Capture image-source identity and read-only status. |
+| `verification` | Hash an existing image and compare requested values. |
+| `acquisition` | Acquire a source to RAW or EWF1 E01. |
+| `evidence_list` | List evidence records for a case. |
+| `audit_append` | Append an explicit examination event. |
+| `audit_verify` | Verify the audit sequence and hash chain. |
+| `hex_preview` | Return a bounded file window. |
+| `text_preview` | Return a bounded decoded text window. |
+| `file_signature` | Identify a file signature. |
+| `extract_file` | Export one regular file. |
+| `extract_directory` | Export a directory and write extraction reports. |
+
+Image and source operations:
+
+```json
+{"operation": "image_identify", "path": "/evidence/disk.E01"}
+```
+
+```json
+{
+  "operation": "filesystem_open",
+  "path": "/evidence/disk.E01",
+  "offset_bytes": 1048576
+}
+```
+
+```json
+{"operation": "source_snapshot", "path": "/evidence/disk.E01"}
+```
+
+```json
+{
+  "operation": "evidence_list",
+  "db_path": "/cases/2026-001/case.db",
+  "case_id": "00000000-0000-0000-0000-000000000001"
+}
+```
 
 ```json
 {"operation": "partition_analysis", "path": "/evidence/disk.E01"}
@@ -185,7 +231,9 @@ The C ABI job manager accepts these JSON operation bodies:
   "operation": "verification",
   "path": "/evidence/disk.E01",
   "algorithms": ["sha256", "sha1"],
-  "expected": {"sha256": "lowercase hex"}
+  "expected": {"sha256": "lowercase hex"},
+  "reports_dir": "/cases/2026-001/reports",
+  "report_base_name": "verification-01"
 }
 ```
 
@@ -201,9 +249,44 @@ The C ABI job manager accepts these JSON operation bodies:
     "maximum_segment_size": 0,
     "compression": "none",
     "verify_after": true
-  }
+  },
+  "reports_dir": "/cases/2026-001/reports",
+  "report_base_name": "acquisition-01"
 }
 ```
+
+When report fields are present, the job returns JSON, CSV, and HTML paths.
+Report filenames are derived from `report_base_name`; the value may not contain
+path components.
+
+Audit operations:
+
+```json
+{
+  "operation": "audit_append",
+  "audit_path": "/cases/2026-001/audit.jsonl",
+  "case_id": "00000000-0000-0000-0000-000000000001",
+  "actor": "examiner",
+  "action": "evidence.opened",
+  "subject_id": "00000000-0000-0000-0000-000000000002",
+  "details": {"source": "disk.E01"}
+}
+```
+
+```json
+{
+  "operation": "audit_verify",
+  "audit_path": "/cases/2026-001/audit.jsonl"
+}
+```
+
+`audit_verify` returns `valid`, `record_count`, `head_hash`, and `reason`.
+`audit_append` runs under the exclusive audit writer lock. Case creation and
+evidence insertion accept an optional `audit_path`. That log is opened before
+the SQLite write so an unavailable log prevents the database commit. A write
+failure after a successful database commit is reported with the explicit
+`audit.append_after_commit` code. The two storage resources do not provide a
+cross-resource transaction.
 
 A successful submission returns a `job_id`. The caller polls
 `ofi_job_snapshot` and may call `ofi_job_cancel` while the job is non-terminal.

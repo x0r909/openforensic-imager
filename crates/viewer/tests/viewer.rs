@@ -255,4 +255,30 @@ proptest! {
         prop_assert!(page.bytes.len() <= length);
         prop_assert_eq!(page.offset, offset);
     }
+
+    #[test]
+    fn preview_entry_points_handle_arbitrary_bytes_without_panicking(
+        bytes in prop::collection::vec(any::<u8>(), 0..8192),
+        offset in any::<u64>(),
+    ) {
+        let length = (bytes.len() % MAX_PAGE_SIZE).max(1);
+        let _ = hex_page(&bytes[..], offset, length);
+        let _ = preview_text(&bytes[..], offset, length);
+        let _ = identify_signature(&bytes[..]);
+    }
+
+    #[test]
+    fn successful_hex_pages_stay_inside_the_source(
+        bytes in prop::collection::vec(any::<u8>(), 0..8192),
+        offset in 0_u64..8192,
+        length in 1_usize..MAX_PAGE_SIZE,
+    ) {
+        if let Ok(page) = hex_page(&bytes[..], offset, length) {
+            let offset = usize::try_from(page.offset).unwrap();
+            prop_assert!(offset <= bytes.len());
+            prop_assert!(page.bytes.len() <= length);
+            prop_assert!(offset + page.bytes.len() <= bytes.len());
+            prop_assert_eq!(&page.bytes, &bytes[offset..offset + page.bytes.len()]);
+        }
+    }
 }

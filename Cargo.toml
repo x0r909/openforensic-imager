@@ -16,6 +16,7 @@ members = [
     "crates/viewer",
     "crates/extraction",
     "crates/job-manager",
+    "crates/worker-sandbox",
     "tests/fixtures",
     "tests/integration",
 ]

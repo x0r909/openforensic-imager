@@ -10,6 +10,7 @@ use acquisition::{
     AcquisitionOptions, AcquisitionRequest, AcquisitionStatus, OutputFormat,
     acquire_path_with_cancel, verify_image,
 };
+use audit_log::{AuditEvent, AuditLog};
 use evidence_manager::{AddEvidence, CaseStore, CreateCase, EvidenceRecord, SourceSnapshot};
 use extraction::{ExtractionOptions, Extractor};
 use filesystem::{EvidenceFile, FileSystem};
@@ -52,6 +53,7 @@ struct CaseCreateRequest {
     id: CaseId,
     title: String,
     examiner: String,
+    audit_path: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -62,6 +64,7 @@ struct EvidenceAddRequest {
     description: String,
     source_path: String,
     source: SourceSnapshot,
+    audit_path: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -105,6 +108,17 @@ enum JobRequest {
         db_path: String,
         case_id: CaseId,
     },
+    AuditAppend {
+        audit_path: String,
+        case_id: CaseId,
+        actor: String,
+        action: String,
+        subject_id: Option<String>,
+        details: BTreeMap<String, String>,
+    },
+    AuditVerify {
+        audit_path: String,
+    },
     HexPreview {
         path: String,
         offset_bytes: u64,
@@ -140,6 +154,40 @@ enum JobRequest {
         reports_dir: String,
         base_name: String,
     },
+}
+
+impl JobRequest {
+    fn operation_name(&self) -> &'static str {
+        match self {
+            Self::ImageIdentify { .. } => "image_identify",
+            Self::PartitionAnalysis { .. } => "partition_analysis",
+            Self::FilesystemList { .. } => "filesystem_list",
+            Self::FilesystemOpen { .. } => "filesystem_open",
+            Self::Verification { .. } => "verification",
+            Self::Acquisition { .. } => "acquisition",
+            Self::SourceSnapshot { .. } => "source_snapshot",
+            Self::EvidenceList { .. } => "evidence_list",
+            Self::AuditAppend { .. } => "audit_append",
+            Self::AuditVerify { .. } => "audit_verify",
+            Self::HexPreview { .. } => "hex_preview",
+            Self::TextPreview { .. } => "text_preview",
+            Self::FileSignature { .. } => "file_signature",
+            Self::ExtractFile { .. } => "extract_file",
+            Self::ExtractDirectory { .. } => "extract_directory",
+        }
+    }
+}
+
+/// Decodes a job request without running its operation.
+///
+/// This is the side-effect-free entry point used by stable property tests and
+/// fuzzing. The C ABI applies the same parser before dispatching a job.
+pub fn validate_job_request(request: &[u8]) -> Result<&'static str, String> {
+    if request.is_empty() || request.len() > MAX_REQUEST_BYTES {
+        return Err("request must be a non-empty bounded byte string".to_owned());
+    }
+    let request = parse_job_request(request).map_err(|error| error.message)?;
+    Ok(request.operation_name())
 }
 
 #[allow(non_camel_case_types)]
@@ -606,7 +654,7 @@ unsafe fn job_manager_and_id<'a>(
 }
 
 fn handle_job_submit(manager: &JobManager, request: &[u8]) -> Result<Vec<u8>, FfiError> {
-    let request: JobRequest = parse_request(request)?;
+    let request = parse_job_request(request)?;
     let job_id = match request {
         JobRequest::ImageIdentify { path } => manager.submit("image_identify", move |_| {
             let image = open_image(Path::new(&path))
@@ -758,6 +806,41 @@ fn handle_job_submit(manager: &JobManager, request: &[u8]) -> Result<Vec<u8>, Ff
                 job_success(evidence)
             })
         }
+        JobRequest::AuditAppend {
+            audit_path,
+            case_id,
+            actor,
+            action,
+            subject_id,
+            details,
+        } => manager.submit("audit_append", move |_| {
+            let mut log = AuditLog::open_append(Path::new(&audit_path))
+                .map_err(|error| JobError::failed("audit.open", error.to_string()))?;
+            let receipt = log
+                .append(AuditEvent {
+                    case_id,
+                    job_id: None,
+                    actor,
+                    action,
+                    subject_id,
+                    details,
+                })
+                .map_err(|error| JobError::failed("audit.append", error.to_string()))?;
+            job_success(json!({
+                "sequence": receipt.sequence,
+                "record_hash": receipt.record_hash.to_hex(),
+            }))
+        }),
+        JobRequest::AuditVerify { audit_path } => manager.submit("audit_verify", move |_| {
+            let status = AuditLog::verify_chain(Path::new(&audit_path))
+                .map_err(|error| JobError::failed("audit.verify", error.to_string()))?;
+            job_success(json!({
+                "valid": status.is_valid(),
+                "record_count": status.record_count(),
+                "head_hash": status.head_hash().map(|hash| hash.to_hex()),
+                "reason": status.reason(),
+            }))
+        }),
         JobRequest::HexPreview {
             path,
             offset_bytes,
@@ -872,6 +955,14 @@ fn handle_job_submit(manager: &JobManager, request: &[u8]) -> Result<Vec<u8>, Ff
     success_bytes(json!({"job_id": job_id}))
 }
 
+fn parse_job_request(request: &[u8]) -> Result<JobRequest, FfiError> {
+    serde_json::from_slice(request).map_err(|error| FfiError {
+        status: ofi_status::OFI_STATUS_INVALID_JSON,
+        code: "invalid_json",
+        message: error.to_string(),
+    })
+}
+
 fn job_success<T: Serialize>(value: T) -> Result<JobOutcome, JobError> {
     Ok(JobOutcome::succeeded(job_value(value)?))
 }
@@ -910,6 +1001,7 @@ unsafe fn request_bytes(request: *const u8, request_len: usize) -> Result<Vec<u8
 
 fn handle_case_create(request: &[u8]) -> Result<Vec<u8>, FfiError> {
     let request: CaseCreateRequest = parse_request(request)?;
+    let mut audit = open_audit(request.audit_path.as_deref())?;
     let store =
         CaseStore::open(Path::new(&request.db_path)).map_err(|error| operation_error(&error))?;
     let record = store
@@ -919,11 +1011,21 @@ fn handle_case_create(request: &[u8]) -> Result<Vec<u8>, FfiError> {
             examiner: request.examiner,
         })
         .map_err(|error| operation_error(&error))?;
+    if let Some(log) = audit.as_mut() {
+        append_committed_audit(
+            log,
+            record.id,
+            "case.created",
+            record.id.to_string(),
+            BTreeMap::from([("title".to_owned(), record.title.clone())]),
+        )?;
+    }
     success_bytes(record)
 }
 
 fn handle_evidence_add(request: &[u8]) -> Result<Vec<u8>, FfiError> {
     let request: EvidenceAddRequest = parse_request(request)?;
+    let mut audit = open_audit(request.audit_path.as_deref())?;
     let store =
         CaseStore::open(Path::new(&request.db_path)).map_err(|error| operation_error(&error))?;
     let record = store
@@ -935,7 +1037,53 @@ fn handle_evidence_add(request: &[u8]) -> Result<Vec<u8>, FfiError> {
             source: request.source,
         })
         .map_err(|error| operation_error(&error))?;
+    if let Some(log) = audit.as_mut() {
+        append_committed_audit(
+            log,
+            record.case_id,
+            "evidence.added",
+            record.id.to_string(),
+            BTreeMap::from([
+                ("source_path".to_owned(), record.source_path.clone()),
+                ("length".to_owned(), record.source.length.to_string()),
+            ]),
+        )?;
+    }
     success_bytes(record)
+}
+
+fn open_audit(path: Option<&str>) -> Result<Option<AuditLog>, FfiError> {
+    path.map(|path| {
+        AuditLog::open_append(Path::new(path)).map_err(|error| FfiError {
+            status: ofi_status::OFI_STATUS_OPERATION_FAILED,
+            code: "audit.open",
+            message: error.to_string(),
+        })
+    })
+    .transpose()
+}
+
+fn append_committed_audit(
+    log: &mut AuditLog,
+    case_id: CaseId,
+    action: &str,
+    subject_id: String,
+    details: BTreeMap<String, String>,
+) -> Result<(), FfiError> {
+    log.append(AuditEvent {
+        case_id,
+        job_id: None,
+        actor: "examiner".to_owned(),
+        action: action.to_owned(),
+        subject_id: Some(subject_id),
+        details,
+    })
+    .map_err(|error| FfiError {
+        status: ofi_status::OFI_STATUS_OPERATION_FAILED,
+        code: "audit.append_after_commit",
+        message: format!("state was committed but the audit append failed: {error}"),
+    })?;
+    Ok(())
 }
 
 fn parse_request<'a, T: Deserialize<'a>>(request: &'a [u8]) -> Result<T, FfiError> {

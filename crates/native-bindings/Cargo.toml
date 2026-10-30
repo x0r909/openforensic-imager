@@ -10,6 +10,7 @@ crate-type = ["rlib", "cdylib", "staticlib"]
 
 [dependencies]
 acquisition = { path = "../acquisition" }
+audit-log = { path = "../audit-log" }
 evidence-manager = { path = "../evidence-manager" }
 extraction = { path = "../extraction" }
 filesystem = { path = "../filesystem" }
@@ -25,5 +26,6 @@ serde_json.workspace = true
 
 [dev-dependencies]
 forensic-fixtures = { path = "../../tests/fixtures" }
+proptest.workspace = true
 tempfile.workspace = true
 uuid.workspace = true

@@ -132,7 +132,8 @@ void AppController::createCase() {
          {QStringLiteral("title"), m_evidenceDescription.isEmpty()
                                        ? QStringLiteral("Forensic case")
                                        : m_evidenceDescription},
-         {QStringLiteral("examiner"), QStringLiteral("Examiner")}},
+         {QStringLiteral("examiner"), QStringLiteral("Examiner")},
+         {QStringLiteral("audit_path"), caseAuditPath()}},
         &error);
     if (response.isEmpty()) {
         emit errorRaised(error);
@@ -528,7 +529,8 @@ void AppController::handleJobUpdate(const QString &jobId, const QJsonObject &sna
               m_evidenceDescription.isEmpty() ? QStringLiteral("Evidence")
                                               : m_evidenceDescription},
              {QStringLiteral("source_path"), pending.imagePath},
-             {QStringLiteral("source"), snapshot}},
+             {QStringLiteral("source"), snapshot},
+             {QStringLiteral("audit_path"), caseAuditPath()}},
             &error);
         if (response.isEmpty()) {
             emit errorRaised(error);
@@ -590,6 +592,11 @@ void AppController::loadPreview(const QVariantMap &entry, const QString &tab) {
     m_viewer.setMetadata(QStringLiteral("Metadata address: %1\nPath: %2")
                              .arg(metadataAddress)
                              .arg(entry.value(QStringLiteral("name")).toString()));
+}
+
+QString AppController::caseAuditPath() const {
+    return QFileInfo(m_caseDatabasePath).absolutePath()
+        + QStringLiteral("/audit.jsonl");
 }
 
 QString AppController::currentImageId() const {

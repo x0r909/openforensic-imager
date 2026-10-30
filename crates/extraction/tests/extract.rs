@@ -257,6 +257,31 @@ fn extraction_stays_under_the_opened_root_when_the_path_is_replaced() {
 }
 
 #[test]
+fn repeated_root_replacement_never_escapes_the_capability() {
+    let (fixture, image) = ext4_with_files(&[("hello.txt", CONTENT)]);
+    let filesystem = FileSystem::open(&image, 0).unwrap();
+    let entry = root_entries(&filesystem)
+        .into_iter()
+        .find(|entry| entry.name == "hello.txt")
+        .unwrap();
+    let outside = fixture.path().join("outside");
+    std::fs::create_dir(&outside).unwrap();
+
+    for index in 0..64 {
+        let output = fixture.path().join(format!("output-{index}"));
+        let moved = fixture.path().join(format!("moved-{index}"));
+        let mut extractor = Extractor::create(&output, ExtractionOptions::default()).unwrap();
+        std::fs::rename(&output, &moved).unwrap();
+        symlink(&outside, &output).unwrap();
+
+        extractor.extract_file(&filesystem, &entry).unwrap();
+
+        assert_eq!(std::fs::read(moved.join("hello.txt")).unwrap(), CONTENT);
+    }
+    assert_eq!(std::fs::read_dir(outside).unwrap().count(), 0);
+}
+
+#[test]
 fn sanitizes_control_separator_like_and_percent_characters() {
     let (fixture, image) = ext4_with_files(&[("hello.txt", CONTENT)]);
     let filesystem = FileSystem::open(&image, 0).unwrap();

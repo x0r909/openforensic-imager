@@ -8,7 +8,9 @@ use native_bindings::{
     ofi_abi_version, ofi_abi_version_minor, ofi_bytes_free, ofi_case_create, ofi_error,
     ofi_error_code, ofi_error_free, ofi_evidence_add, ofi_job_cancel, ofi_job_manager,
     ofi_job_manager_free, ofi_job_manager_new, ofi_job_snapshot, ofi_job_submit, ofi_status,
+    validate_job_request,
 };
+use proptest::prelude::*;
 use tempfile::tempdir;
 
 unsafe fn error_code(error: *mut ofi_error) -> String {
@@ -23,6 +25,34 @@ unsafe fn error_code(error: *mut ofi_error) -> String {
 fn abi_version_is_one() {
     assert_eq!(ofi_abi_version(), 1);
     assert_eq!(ofi_abi_version_minor(), 1);
+}
+
+#[test]
+fn job_request_validation_has_no_filesystem_side_effects() {
+    let directory = tempdir().unwrap();
+    let audit = directory.path().join("audit.jsonl");
+    let request = serde_json::to_vec(&serde_json::json!({
+        "operation": "audit_append",
+        "audit_path": audit,
+        "case_id": "00000000-0000-0000-0000-000000000030",
+        "actor": "fuzzer",
+        "action": "must.not.run",
+        "subject_id": null,
+        "details": {},
+    }))
+    .unwrap();
+
+    let operation = validate_job_request(&request).unwrap();
+
+    assert_eq!(operation, "audit_append");
+    assert!(!audit.exists());
+}
+
+proptest! {
+    #[test]
+    fn arbitrary_job_request_bytes_never_panic(bytes in prop::collection::vec(any::<u8>(), 0..8192)) {
+        let _ = validate_job_request(&bytes);
+    }
 }
 
 #[test]
@@ -722,4 +752,141 @@ fn source_snapshot_and_evidence_list_jobs_work() {
     assert_eq!(listed["body"]["status"], "succeeded");
     assert_eq!(listed["body"]["result"][0]["id"], evidence_id);
     unsafe { ofi_job_manager_free(manager) };
+}
+
+#[test]
+fn case_and_evidence_writes_append_to_the_audit_chain() {
+    let directory = tempdir().unwrap();
+    let database = directory.path().join("case.db");
+    let audit = directory.path().join("audit.jsonl");
+    let case_id = "00000000-0000-0000-0000-000000000020";
+    let evidence_id = "00000000-0000-0000-0000-000000000021";
+    let request = serde_json::to_vec(&serde_json::json!({
+        "db_path": database,
+        "id": case_id,
+        "title": "Audited case",
+        "examiner": "Examiner",
+        "audit_path": audit,
+    }))
+    .unwrap();
+    let mut response = ptr::null_mut();
+    let mut response_len = 0;
+    let mut error = ptr::null_mut();
+    assert_eq!(
+        unsafe {
+            ofi_case_create(
+                request.as_ptr(),
+                request.len(),
+                &mut response,
+                &mut response_len,
+                &mut error,
+            )
+        },
+        ofi_status::OFI_STATUS_OK
+    );
+    unsafe { ofi_bytes_free(response, response_len) };
+    let request = serde_json::to_vec(&serde_json::json!({
+        "db_path": database,
+        "id": evidence_id,
+        "case_id": case_id,
+        "description": "disk",
+        "source_path": "/tmp/disk.raw",
+        "source": {
+            "device": 1, "inode": 2, "length": 4096,
+            "mtime_seconds": 10, "mtime_nanoseconds": 3,
+            "ctime_seconds": 20, "ctime_nanoseconds": 4,
+            "read_only": true
+        },
+        "audit_path": audit,
+    }))
+    .unwrap();
+    assert_eq!(
+        unsafe {
+            ofi_evidence_add(
+                request.as_ptr(),
+                request.len(),
+                &mut response,
+                &mut response_len,
+                &mut error,
+            )
+        },
+        ofi_status::OFI_STATUS_OK
+    );
+    unsafe { ofi_bytes_free(response, response_len) };
+
+    let mut manager: *mut ofi_job_manager = ptr::null_mut();
+    assert_eq!(
+        unsafe { ofi_job_manager_new(1, &mut manager, &mut error) },
+        ofi_status::OFI_STATUS_OK
+    );
+    let id = unsafe {
+        submit_request(
+            manager,
+            &serde_json::json!({"operation": "audit_verify", "audit_path": audit}),
+        )
+    };
+    let verified = unsafe { wait_for_job(manager, &id) };
+
+    assert_eq!(verified["body"]["status"], "succeeded");
+    assert_eq!(verified["body"]["result"]["valid"], true);
+    assert_eq!(verified["body"]["result"]["record_count"], 2);
+    assert!(verified["body"]["result"]["head_hash"].is_string());
+    unsafe { ofi_job_manager_free(manager) };
+}
+
+#[test]
+fn audit_open_failure_prevents_case_commit() {
+    let directory = tempdir().unwrap();
+    let database = directory.path().join("case.db");
+    let invalid_audit = directory.path().join("audit-directory");
+    std::fs::create_dir(&invalid_audit).unwrap();
+    let valid_audit = directory.path().join("audit.jsonl");
+    let case_id = "00000000-0000-0000-0000-000000000040";
+    let mut request = serde_json::to_vec(&serde_json::json!({
+        "db_path": database,
+        "id": case_id,
+        "title": "Preflight case",
+        "examiner": "Examiner",
+        "audit_path": invalid_audit,
+    }))
+    .unwrap();
+    let mut response = ptr::null_mut();
+    let mut response_len = 0;
+    let mut error = ptr::null_mut();
+
+    let status = unsafe {
+        ofi_case_create(
+            request.as_ptr(),
+            request.len(),
+            &mut response,
+            &mut response_len,
+            &mut error,
+        )
+    };
+
+    assert_eq!(status, ofi_status::OFI_STATUS_OPERATION_FAILED);
+    assert_eq!(unsafe { error_code(error) }, "audit.open");
+
+    request = serde_json::to_vec(&serde_json::json!({
+        "db_path": database,
+        "id": case_id,
+        "title": "Preflight case",
+        "examiner": "Examiner",
+        "audit_path": valid_audit,
+    }))
+    .unwrap();
+    error = ptr::null_mut();
+    assert_eq!(
+        unsafe {
+            ofi_case_create(
+                request.as_ptr(),
+                request.len(),
+                &mut response,
+                &mut response_len,
+                &mut error,
+            )
+        },
+        ofi_status::OFI_STATUS_OK
+    );
+    unsafe { ofi_bytes_free(response, response_len) };
 }

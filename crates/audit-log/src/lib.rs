@@ -8,7 +8,8 @@ use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
 
 use forensic_core::{CaseId, JobId, UtcTimestamp};
-use serde::{Deserialize, Serialize};
+use serde::ser::SerializeStruct;
+use serde::{Deserialize, Serialize, Serializer};
 
 use chain::{append_record, hash_record, lock_exclusive, lock_shared, read_last_record, verify};
 
@@ -43,6 +44,20 @@ pub struct AuditChainStatus {
     record_count: u64,
     head_hash: Option<Sha256Digest>,
     reason: Option<String>,
+}
+
+impl Serialize for AuditChainStatus {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut status = serializer.serialize_struct("AuditChainStatus", 4)?;
+        status.serialize_field("valid", &self.is_valid())?;
+        status.serialize_field("record_count", &self.record_count)?;
+        status.serialize_field("head_hash", &self.head_hash)?;
+        status.serialize_field("reason", &self.reason)?;
+        status.end()
+    }
 }
 
 impl AuditChainStatus {

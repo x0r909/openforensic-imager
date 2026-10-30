@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 use std::io::Read;
+use std::process::Command;
 
 use acquisition::{
     AcquisitionCompression, AcquisitionOptions, AcquisitionRequest, AcquisitionStatus,
@@ -234,6 +235,75 @@ fn verification_distinguishes_match_mismatch_and_missing() {
         absent.outcomes[&HashAlgorithm::Sha256],
         VerificationOutcome::NotAvailable
     );
+}
+
+#[test]
+fn acquisition_never_opens_the_source_for_write() {
+    if Command::new("strace").arg("-V").output().is_err() {
+        eprintln!("strace is unavailable; source-open syscall trace skipped");
+        return;
+    }
+    let directory = tempdir().unwrap();
+    let source = source_fixture(&directory.path().join("fixtures"));
+    let destination = directory.path().join("evidence");
+    std::fs::create_dir(&destination).unwrap();
+    let trace = directory.path().join("source-open.trace");
+
+    let status = Command::new("strace")
+        .args(["-f", "-qq", "-e", "trace=open,openat,openat2", "-o"])
+        .arg(&trace)
+        .arg(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "source_write_syscall_child",
+            "--nocapture",
+            "--test-threads=1",
+        ])
+        .env("OFI_SOURCE_WRITE_CHILD", "1")
+        .env("OFI_SOURCE_PATH", &source)
+        .env("OFI_DESTINATION_PATH", &destination)
+        .status()
+        .unwrap();
+
+    assert!(status.success(), "traced acquisition child failed");
+    let trace = std::fs::read_to_string(trace).unwrap();
+    let source_path = source.to_string_lossy();
+    let source_opens = trace
+        .lines()
+        .filter(|line| line.contains(source_path.as_ref()))
+        .collect::<Vec<_>>();
+    assert!(
+        !source_opens.is_empty(),
+        "the trace did not contain the source open"
+    );
+    for line in source_opens {
+        assert!(line.contains("O_RDONLY"), "{line}");
+        assert!(!line.contains("O_WRONLY"), "{line}");
+        assert!(!line.contains("O_RDWR"), "{line}");
+    }
+}
+
+#[test]
+fn source_write_syscall_child() {
+    if std::env::var_os("OFI_SOURCE_WRITE_CHILD").is_none() {
+        return;
+    }
+    let source = std::path::PathBuf::from(std::env::var_os("OFI_SOURCE_PATH").unwrap());
+    let destination = std::path::PathBuf::from(std::env::var_os("OFI_DESTINATION_PATH").unwrap());
+    let result = acquire_path(AcquisitionRequest {
+        source_path: source,
+        destination_dir: destination,
+        base_name: "syscall-trace".to_owned(),
+        format: OutputFormat::Raw,
+        options: AcquisitionOptions {
+            block_size: 4096,
+            maximum_segment_size: 1024 * 1024,
+            compression: AcquisitionCompression::None,
+            verify_after: true,
+        },
+    })
+    .unwrap();
+    assert_eq!(result.status, AcquisitionStatus::Succeeded);
 }
 
 struct FaultyReader {
