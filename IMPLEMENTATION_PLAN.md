@@ -1,0 +1,384 @@
+# OpenForensic Imager Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use
+> superpowers:subagent-driven-development (recommended) or
+> superpowers:executing-plans to implement this plan task-by-task. Steps use
+> checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Deliver a tested Linux-native forensic acquisition and analysis
+application, beginning with Phase 1 only.
+
+**Architecture:** Rust libraries provide integrity-critical domain logic,
+persistence, hashing, image access, and reporting. A C ABI connects them to a
+C++/Qt desktop shell. Native forensic parsers run in an isolated worker process.
+
+**Tech Stack:** Rust, Tokio, SQLite, Serde, Tracing, Qt 6, QML, TSK, libewf,
+optional libyal libraries, CMake, Ninja, Cargo.
+
+**Spec:** [REQUIREMENTS.md](REQUIREMENTS.md)
+
+## Global constraints
+
+- Primary platform is Ubuntu 26.04 LTS x86_64.
+- Secondary platforms are Debian, Arch Linux, and Fedora.
+- Future architecture includes ARM64.
+- The application MUST open source evidence read-only and MUST NOT modify it.
+- The application MUST NOT automatically mount evidence read-write.
+- Evidence is untrusted input.
+- Every successful acquisition MUST have a corresponding verification test.
+- Never load an entire disk image into memory.
+- Use streaming I/O and bounded buffers.
+- Use checked arithmetic for offsets and lengths.
+- Use established forensic libraries for mature formats.
+- Do not invent FTK behavior or claim compatibility without test evidence.
+- Never report a feature complete without executable tests.
+- Pin Rust, Qt, TSK, libewf, and optional native libraries in release builds.
+- Keep the supplied FTK installer untracked.
+- Preserve existing user changes in the worktree.
+
+## Review focus
+
+1. Source safety: a malformed or hostile path must never cause a write to
+   evidence.
+2. Arithmetic: every image range and file size combination must reject overflow
+   and out-of-range access.
+3. Result honesty: partial reads, unavailable hashes, and uncertain timestamps
+   must remain visibly non-successful.
+4. Durability: an evidence or audit write must not appear committed before its
+   required flush and hash-chain update.
+5. Resource exhaustion: a large image, directory, name, or page request must
+   fail or page within a documented budget.
+
+## Roadmap
+
+| Phase | Scope | Acceptance gate |
+|---|---|---|
+| 0 | Environment, feasibility, architecture, requirements, security, tests | These documents reviewed and approved |
+| 1 | Workspace, forensic core, RAW reader, streaming hashes, evidence metadata | Tested core with deterministic RAW fixtures |
+| 2 | RAW and E01 acquisition, verification, acquisition reports | Paired acquisition and verification evidence |
+| 3 | MBR/GPT, NTFS, FAT32, exFAT, ext4, metadata, deleted status | Differential parser evidence |
+| 4 | Viewer, hex, preview, extraction | Security and resource tests |
+| 5 | Qt UI, QML, models, jobs, evidence manager | GUI and accessibility tests |
+| 6 | Full audit, fuzzing, differential, security validation | No open critical/high defects |
+| 7 | DEB, AppImage, Flatpak assessment, reproducibility | Clean-system release tests |
+
+## Phase 1 file map
+
+```text
+Cargo.toml
+rust-toolchain.toml
+crates/forensic-core/src/lib.rs
+crates/forensic-core/src/id.rs
+crates/forensic-core/src/error.rs
+crates/forensic-core/src/range.rs
+crates/forensic-core/src/time.rs
+crates/hashing/src/lib.rs
+crates/hashing/src/digest.rs
+crates/hashing/src/stream.rs
+crates/image-reader/src/lib.rs
+crates/image-reader/src/source.rs
+crates/image-reader/src/raw.rs
+crates/evidence-manager/src/lib.rs
+crates/evidence-manager/src/db.rs
+crates/evidence-manager/src/migrations.rs
+crates/audit-log/src/lib.rs
+crates/audit-log/src/chain.rs
+crates/native-bindings/src/lib.rs
+crates/native-bindings/include/ofi.h
+tests/fixtures/src/lib.rs
+tests/fixtures/src/raw.rs
+tests/integration/phase1_core.rs
+```
+
+## Phase 1 tasks
+
+### Task 1: Workspace and forensic-core primitives
+
+**Files:**
+
+- Create: `Cargo.toml`
+- Create: `rust-toolchain.toml`
+- Create: `crates/forensic-core/Cargo.toml`
+- Create: `crates/forensic-core/src/lib.rs`
+- Create: `crates/forensic-core/src/id.rs`
+- Create: `crates/forensic-core/src/error.rs`
+- Create: `crates/forensic-core/src/range.rs`
+- Test: `crates/forensic-core/tests/primitives.rs`
+
+**Interfaces:**
+
+- Produces `CaseId`, `EvidenceId`, `SourceId`, `ArtifactId`, `JobId` as UUID
+  newtypes.
+- Produces `ByteRange::new(offset: u64, length: u64, subject_length: u64) ->
+  Result<ByteRange, CoreError>`.
+- Produces `CoreError` with a stable `ErrorCode`, context, and retryability.
+
+- [ ] **Step 1: Create the Cargo workspace and empty crate**
+- [ ] **Step 2: Write failing tests for UUID round trips, zero-length ranges, boundary ranges, and overflow rejection**
+- [ ] **Step 3: Run the tests and verify they fail**
+- [ ] **Step 4: Implement newtype IDs, `ByteRange`, and `CoreError`**
+- [ ] **Step 5: Run `cargo test -p forensic-core` and verify all tests pass**
+- [ ] **Step 6: Commit the task**
+
+### Task 2: Streaming hash engine
+
+**Files:**
+
+- Create: `crates/hashing/Cargo.toml`
+- Create: `crates/hashing/src/lib.rs`
+- Create: `crates/hashing/src/digest.rs`
+- Create: `crates/hashing/src/stream.rs`
+- Test: `crates/hashing/tests/known_vectors.rs`
+- Test: `crates/hashing/tests/chunk_properties.rs`
+
+**Interfaces:**
+
+- Consumes `CoreError` from `forensic-core`.
+- Produces `HashAlgorithm { Md5, Sha1, Sha256, Sha512 }`.
+- Produces `HashScope { SourceRead, OutputLogical, StoredFormat, ExtractedFile }`.
+- Produces `StreamingHasher::new(algorithms: &[HashAlgorithm])`.
+- Produces `StreamingHasher::update(&mut self, bytes: &[u8])`.
+- Produces `StreamingHasher::finish(self) -> BTreeMap<HashAlgorithm, HashDigest>`.
+
+- [ ] **Step 1: Add known-answer tests for empty input and `abc` for all four algorithms**
+- [ ] **Step 2: Run the tests and verify they fail**
+- [ ] **Step 3: Implement digest encoding and streaming contexts**
+- [ ] **Step 4: Add a property test that randomized chunking matches one-shot hashing**
+- [ ] **Step 5: Run `cargo test -p hashing` and verify all tests pass**
+- [ ] **Step 6: Compare SHA-256 of a generated file with `sha256sum`**
+- [ ] **Step 7: Commit the task**
+
+### Task 3: Read-only RAW image reader
+
+**Files:**
+
+- Create: `crates/image-reader/Cargo.toml`
+- Create: `crates/image-reader/src/lib.rs`
+- Create: `crates/image-reader/src/source.rs`
+- Create: `crates/image-reader/src/raw.rs`
+- Test: `crates/image-reader/tests/raw_reader.rs`
+
+**Interfaces:**
+
+- Consumes `ByteRange`, `CoreError`, and `JobId`.
+- Produces `ImageReader` trait:
+  - `logical_length(&self) -> u64`
+  - `sector_size(&self) -> u32`
+  - `read_exact_at(&self, range: ByteRange, out: &mut [u8]) -> Result<(), ReadError>`
+  - `metadata(&self) -> ImageMetadata`
+- Produces `RawReader::open_read_only(path: &Path) -> Result<RawReader, ImageError>`.
+- Produces `SourceFingerprint` containing device or file identity, length,
+  modification identity, and read-only status.
+
+- [ ] **Step 1: Write failing tests for a missing file, an empty file, a full valid read, and an out-of-range read**
+- [ ] **Step 2: Run the tests and verify they fail**
+- [ ] **Step 3: Implement source opening with `O_RDONLY | O_CLOEXEC` and metadata capture**
+- [ ] **Step 4: Implement `pread`-based exact range reads with checked offsets**
+- [ ] **Step 5: Add a test that changes the file during a read session and requires a typed concurrent-modification error**
+- [ ] **Step 6: Run `cargo test -p image-reader` and verify all tests pass**
+- [ ] **Step 7: Commit the task**
+
+### Task 4: Evidence metadata and migrations
+
+**Files:**
+
+- Create: `crates/evidence-manager/Cargo.toml`
+- Create: `crates/evidence-manager/src/lib.rs`
+- Create: `crates/evidence-manager/src/db.rs`
+- Create: `crates/evidence-manager/src/migrations.rs`
+- Test: `crates/evidence-manager/tests/cases_and_evidence.rs`
+
+**Interfaces:**
+
+- Consumes domain IDs and errors.
+- Produces `CaseStore::open(path: &Path) -> Result<CaseStore, StoreError>`.
+- Produces `CaseStore::create_case(input: CreateCase) -> Result<CaseRecord, StoreError>`.
+- Produces `CaseStore::add_evidence(input: AddEvidence) -> Result<EvidenceRecord, StoreError>`.
+- Produces `CaseStore::list_evidence(case_id: CaseId) -> Result<Vec<EvidenceRecord>, StoreError>`.
+
+- [ ] **Step 1: Write failing tests for schema creation, foreign keys, duplicate IDs, UTC timestamps, and transactional evidence insertion**
+- [ ] **Step 2: Run the tests and verify they fail**
+- [ ] **Step 3: Implement versioned migrations and the minimum Phase 1 tables**
+- [ ] **Step 4: Enable WAL and `synchronous = FULL` for evidence-state commits**
+- [ ] **Step 5: Add a test that reopening the database preserves source fingerprint and evidence identifiers**
+- [ ] **Step 6: Run `cargo test -p evidence-manager` and verify all tests pass**
+- [ ] **Step 7: Commit the task**
+
+### Task 5: Append-only audit log
+
+**Files:**
+
+- Create: `crates/audit-log/Cargo.toml`
+- Create: `crates/audit-log/src/lib.rs`
+- Create: `crates/audit-log/src/chain.rs`
+- Test: `crates/audit-log/tests/append_only.rs`
+
+**Interfaces:**
+
+- Consumes `CaseId`, `JobId`, and `CoreError`.
+- Produces `AuditLog::open_append(path: &Path) -> Result<AuditLog, AuditError>`.
+- Produces `AuditLog::append(event: AuditEvent) -> Result<AuditReceipt, AuditError>`.
+- Produces `AuditLog::verify_chain(path: &Path) -> Result<AuditChainStatus, AuditError>`.
+- Produces `AuditReceipt { sequence: u64, record_hash: Sha256Digest }`.
+
+- [ ] **Step 1: Write failing tests for monotonic sequence, previous-hash linkage, UTF-8 escaping, and fsync-before-return**
+- [ ] **Step 2: Run the tests and verify they fail**
+- [ ] **Step 3: Implement canonical record encoding and SHA-256 chain hashing**
+- [ ] **Step 4: Implement exclusive-file-lock append and flush**
+- [ ] **Step 5: Add tamper tests for edited, reordered, deleted, and truncated records**
+- [ ] **Step 6: Add a concurrent writer test with one accepted writer and typed rejection for competing writers**
+- [ ] **Step 7: Run `cargo test -p audit-log` and verify all tests pass**
+- [ ] **Step 8: Commit the task**
+
+### Task 6: Minimal C ABI
+
+**Files:**
+
+- Create: `crates/native-bindings/Cargo.toml`
+- Create: `crates/native-bindings/src/lib.rs`
+- Generate: `crates/native-bindings/include/ofi.h`
+- Test: `crates/native-bindings/tests/abi.rs`
+- Create: `tests/integration/c-abi-smoke.c`
+
+**Interfaces:**
+
+- Produces `ofi_abi_version()`.
+- Produces `ofi_case_create` and `ofi_evidence_add` request adapters.
+- Produces owned byte and error release functions.
+- Consumes Serde request and response types from `forensic-core`.
+
+- [ ] **Step 1: Write failing Rust tests for null pointers, invalid lengths, invalid UTF-8, and panic containment**
+- [ ] **Step 2: Run the tests and verify they fail**
+- [ ] **Step 3: Implement the ABI version check and owned response envelope**
+- [ ] **Step 4: Generate the C header and compile the C smoke harness**
+- [ ] **Step 5: Run the C harness and verify allocation and release ownership**
+- [ ] **Step 6: Run `cargo test -p native-bindings` and verify all tests pass**
+- [ ] **Step 7: Commit the task**
+
+### Task 7: Deterministic RAW fixture generator
+
+**Files:**
+
+- Create: `tests/fixtures/Cargo.toml`
+- Create: `tests/fixtures/src/lib.rs`
+- Create: `tests/fixtures/src/raw.rs`
+- Test: `tests/fixtures/tests/raw_manifest.rs`
+
+**Interfaces:**
+
+- Produces `generate_raw_fixture(seed: u64, layout: RawLayout) -> FixtureManifest`.
+- Produces `FixtureManifest` with byte length, block size, segment sizes, file
+  hashes, and generator version.
+
+- [ ] **Step 1: Write failing tests for empty, sparse, dense, and split RAW layouts**
+- [ ] **Step 2: Implement deterministic pseudorandom generation from a fixed seed**
+- [ ] **Step 3: Assert regenerated fixtures match their manifests**
+- [ ] **Step 4: Verify fixture hashes with `sha256sum`**
+- [ ] **Step 5: Commit the generator and manifests, not generated binaries**
+
+### Task 8: Phase 1 integration test
+
+**Files:**
+
+- Create: `tests/integration/phase1_core.rs`
+- Modify: `Cargo.toml`
+
+**Interfaces:**
+
+- Consumes all Phase 1 crates.
+
+- [ ] **Step 1: Write a test that creates a case, hashes a RAW fixture, opens it read-only, reads selected ranges, records evidence metadata, and appends audit events**
+- [ ] **Step 2: Assert the source fingerprint and source hash before and after are unchanged**
+- [ ] **Step 3: Assert the database and audit log reopen successfully**
+- [ ] **Step 4: Run `cargo test --workspace` and verify all tests pass**
+- [ ] **Step 5: Run `cargo clippy --workspace --all-targets -- -D warnings`**
+- [ ] **Step 6: Run the integration test under AddressSanitizer where supported**
+- [ ] **Step 7: Commit the Phase 1 integration**
+
+## Phase 2 execution outline
+
+Before code:
+
+- Review the pinned libewf commit and license.
+- Add `ewf-tools` to the reproducible test image.
+- Define acquisition and verification state machines and schemas.
+- Write failing tests for RAW acquisition, E01 round trip, cancellation, partial
+  acquisition, read errors, and verification mismatch.
+
+Implementation order:
+
+1. RAW acquisition with staged output and manifest.
+2. Independent source and output hash contexts.
+3. Pinned libewf wrapper and E01 writer.
+4. E01 reader and metadata.
+5. Verification engine and report models.
+6. Acquisition and verification reports.
+7. Worker isolation and cancellation integration.
+8. Differential tests against `ewfverify`, `ewfinfo`, `img_cat`, and TSK.
+
+Phase 2 is not accepted until every successful acquisition is paired with
+verification evidence and partial or failed outputs are unmistakable.
+
+## Phase 3 execution outline
+
+1. Pin and build TSK.
+2. Wrap MBR and GPT volume systems.
+3. Add partition differential tests.
+4. Wrap filesystem open, directory pages, metadata, and file reads.
+5. Add timestamp provenance handling for NTFS, FAT32, exFAT, and ext4.
+6. Add deleted-name, unallocated metadata, and orphan status.
+7. Differential tests per filesystem.
+8. Document all parser-specific limitations.
+
+## Phase 4 execution outline
+
+1. Hex paging model.
+2. Bounded text viewer and encoding detection.
+3. File signature identification.
+4. Image and optional PDF preview.
+5. Capability-based extraction with `openat2`.
+6. Extraction metadata and report.
+7. Path traversal, symlink race, resource, and decompression tests.
+
+## Phase 5 execution outline
+
+1. C++ `QMainWindow` shell.
+2. QML quick widgets and theme tokens.
+3. Evidence tree and file list models.
+4. Properties and viewer tabs.
+5. Acquisition wizard and verification view.
+6. Background task manager.
+7. Keyboard, accessibility, theme, and large-model tests.
+
+## Phase 6 execution outline
+
+1. Full audit reports and chain verification.
+2. Differential suite expansion.
+3. Native fuzzing and sanitizer runs.
+4. Worker sandbox negative tests.
+5. Source-write and extraction-race validation.
+6. Capacity and soak tests.
+7. Security review and limitation report.
+
+## Phase 7 execution outline
+
+1. Reproducible DEB build.
+2. AppImage with pinned libraries.
+3. Flatpak analysis build and documented acquisition limits.
+4. SBOM and third-party notices.
+5. Clean-system installation and smoke tests.
+6. Installation, recovery, and reproducibility documentation.
+
+## Self-review
+
+- Spec coverage: Phase 1 covers workspace, core, RAW read, streaming hashes, and
+  evidence metadata. Later phases map the remaining modules.
+- Step scan: Each Phase 1 task has a failing test, implementation, verification,
+  and commit.
+- Type consistency: IDs, `ByteRange`, `ImageReader`, `HashAlgorithm`, and
+  `AuditReceipt` names are stable across tasks.
+- Review focus: Source safety, overflow, result honesty, durability, and
+  resource limits each have owning tests.
+- Proportion: Phase 1 is intentionally limited. Qt, TSK, and libewf are not
+  implemented before their review gates.
+

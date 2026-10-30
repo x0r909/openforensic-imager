@@ -1,0 +1,41 @@
+# Local proprietary investigation artifact
+/FTK-Imager-8.3.0.27/
+
+# Rust and C/C++ build output
+/target/
+/build/
+/cmake-build-*/
+*.o
+*.a
+*.so
+*.so.*
+
+# Qt generated files
+*.moc
+moc_*.cpp
+ui_*.h
+qrc_*.cpp
+
+# Runtime output
+*.db
+*.db-shm
+*.db-wal
+*.log
+*.partial
+
+# Generated forensic fixtures
+/tests/fixtures/generated/
+
+# Packaging staging
+/packaging/staging/
+/packaging/AppDir/
+
+# Agent execution scratch
+/.superpowers/
+/.worktrees/
+
+# Editor and OS noise
+.idea/
+.vscode/
+.DS_Store
+
