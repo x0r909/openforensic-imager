@@ -6,6 +6,7 @@ members = [
     "crates/image-reader",
     "crates/evidence-manager",
     "crates/audit-log",
+    "crates/native-bindings",
 ]
 
 [workspace.package]
