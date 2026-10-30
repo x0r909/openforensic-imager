@@ -265,3 +265,22 @@ The initial release cannot ship with:
 Required tests include sanitizers, fuzzing, permanent negative tests, and
 documented manual checks for controls that cannot be automated.
 
+## 15. Phase 4 extraction status
+
+The extraction crate now opens a newly created owner-only root and resolves
+each relative name with `openat2` under `RESOLVE_BENEATH`,
+`RESOLVE_NO_SYMLINKS`, and `RESOLVE_NO_MAGICLINKS`. Files are created with
+`O_CREAT | O_EXCL | O_NOFOLLOW`, mode `0600`, synced, reopened read-only, and
+hashed before success is recorded.
+
+Executable tests cover traversal, absolute paths, destination symlinks,
+evidence symlink objects, root-path replacement, conflicts, Unicode and control
+characters, per-file and cumulative limits, source immutability, output
+permissions, report injection, signature mismatch, invalid source byte counts,
+truncated image headers, and decompression-bomb dimensions.
+
+Actual image and PDF rendering is not yet enabled. A renderer must run in the
+isolated worker, enforce the same pixel and byte limits, and receive only the
+bounded preview plan or staged bytes. High-frequency race stress, fuzzing, and
+worker sandbox verification remain Phase 6 gates.
+

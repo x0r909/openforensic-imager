@@ -13,7 +13,7 @@
 | Unsupported | Not claimed |
 
 No FTK runtime check was performed. This matrix records the tested core-library
-state after Phase 3. The desktop UI and later workflow modules are not complete.
+state after Phase 4. The desktop UI and later workflow modules are not complete.
 
 ## Workflow matrix
 
@@ -32,10 +32,10 @@ state after Phase 3. The desktop UI and later workflow modules are not complete.
 | ext4 browsing | Yes | Unknown | Yes | Tested core explorer | TSK plus debugfs |
 | Deleted names | Yes | Unknown | Yes where parser exposes | Partial: ext4 status fixture | Deletion fixtures per FS |
 | Deleted content recovery | Yes, limited claim | Unknown | Conditional | Not implemented | Reused-block and retained-block fixtures |
-| Hex view | Yes | Unknown | Yes | Not implemented | Paged hex model tests |
-| Text view | Yes | Unknown | Yes | Not implemented | Encoding and budget tests |
-| Image preview | Via natural mode | Unknown | Yes, bounded | Not implemented | Image bomb tests |
-| PDF preview | Not established | Unknown | Optional, safe | Not implemented | Isolated parser tests |
+| Hex view | Yes | Unknown | Yes | Tested paged core model | Paged hex model tests |
+| Text view | Yes | Unknown | Yes | Tested bounded core model | Encoding and budget tests |
+| Image preview | Via natural mode | Unknown | Yes, bounded | Partial: preflight only | Image bomb tests |
+| PDF preview | Not established | Unknown | Optional, safe | Partial: size preflight only | Isolated parser tests |
 | Physical acquisition | Yes | Unknown | Yes, with write blocker | Not implemented | Injected read-error tests |
 | Logical acquisition | Yes | Unknown | Yes | Not implemented | Source policy tests |
 | RAW output | Yes | Unknown | Yes | Tested for regular-file sources | Byte equality and hash tests |
@@ -53,11 +53,12 @@ state after Phase 3. The desktop UI and later workflow modules are not complete.
 | Verify stored E01 hash | Yes | Unknown | Yes | Tested match/mismatch/unavailable | Match/mismatch/missing tests |
 | Bad-sector count | Yes | Unknown | Yes | Tested with injected sources | Fault injection |
 | Exact unreadable ranges | Not established | Unknown | Yes | Tested with injected sources | Fault injection |
-| Export individual file | Yes | Unknown | Yes | Not implemented | Byte/hash tests |
-| Export directory | Yes | Unknown | Yes | Not implemented | Traversal and conflict tests |
-| Preserve evidence | Yes as claim | Unknown | Yes, tested | Not implemented | Source hash unchanged tests |
+| Export individual file | Yes | Unknown | Yes | Tested core extractor | Byte/hash tests |
+| Export directory | Yes | Unknown | Yes | Tested core extractor | Traversal and conflict tests |
+| Preserve evidence | Yes as claim | Unknown | Yes, tested | Tested source hash unchanged | Source hash unchanged tests |
 | Acquisition report | Image summary | Unknown | Yes | Not implemented | Report schema tests |
 | Verification report | Results screen | Unknown | Yes | Not implemented | Report schema tests |
+| File extraction report | Yes | Unknown | Yes | Tested JSON/CSV/HTML | Report schema and escaping tests |
 | Append-only audit | Not established for free Imager | Unknown | Yes | Tested core log | Chain and tamper tests |
 | Read-only mount | Yes | Unknown | No initial | Unsupported | Deferred mount design |
 | External viewer | Documented | Unknown | No | Unsupported | Security decision |

@@ -163,6 +163,54 @@ Job states:
 - `failed`
 - `cancelled`
 
+## Viewer page
+
+```json
+{
+  "source_length": 1073741824,
+  "offset": 0,
+  "requested_length": 4096,
+  "returned_length": 4096,
+  "truncated": false,
+  "encoding": null,
+  "signature": "png",
+  "renderer": "image",
+  "isolated": true,
+  "image_pixels": 64000
+}
+```
+
+Hex and text requests are limited to 64 KiB. An image render plan is rejected
+when the detected dimensions exceed 40 million pixels or the source signature
+does not match the supplied plan. PDF rendering is limited to 64 MiB until an
+isolated renderer proves stricter streaming behavior.
+
+## Extraction manifest
+
+```json
+{
+  "schema_version": 1,
+  "generated_at": "2026-10-30T12:34:56Z",
+  "output_root": "/examiner/exports",
+  "directory": "files",
+  "status": "complete",
+  "records": [
+    {
+      "original_name": "report.txt",
+      "relative_path": "files/report.txt",
+      "exported_size": 1234,
+      "source_sha256": "lowercase hex",
+      "output_sha256": "lowercase hex",
+      "extracted_at": "2026-10-30T12:34:57Z"
+    }
+  ],
+  "failures": []
+}
+```
+
+`partial` is mandatory when any requested entry fails. Every successful record
+requires matching source and reopened-output SHA-256 values.
+
 ## Worker frame
 
 ```text

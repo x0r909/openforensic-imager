@@ -340,6 +340,11 @@ verification evidence and partial or failed outputs are unmistakable.
 6. Extraction metadata and report.
 7. Path traversal, symlink race, resource, and decompression tests.
 
+Phase 4 core implementation is complete and recorded in
+[`docs/testing/phase4-results.md`](docs/testing/phase4-results.md). Actual
+image/PDF decoding belongs behind the Phase 5 worker and Qt renderer boundary;
+the core currently supplies validated render plans and resource limits.
+
 ## Phase 5 execution outline
 
 1. C++ `QMainWindow` shell.

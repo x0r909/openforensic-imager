@@ -13,6 +13,8 @@ members = [
     "crates/tsk-bindings",
     "crates/partition-analyzer",
     "crates/filesystem",
+    "crates/viewer",
+    "crates/extraction",
     "tests/fixtures",
     "tests/integration",
 ]

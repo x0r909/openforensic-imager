@@ -192,3 +192,37 @@ fn read_limit_is_enforced() {
 
     assert!(error.message().contains("limit"));
 }
+
+#[test]
+fn reads_an_evidence_file_in_bounded_chunks() {
+    let directory = tempdir().unwrap();
+    let source = write_source(directory.path());
+    let image = directory.path().join("ext4-stream.raw");
+    create_sized(&image, 64 * 1024 * 1024);
+    run(Command::new("mke2fs")
+        .arg("-q")
+        .arg("-F")
+        .arg("-t")
+        .arg("ext4")
+        .arg(&image));
+    run_debugfs(&image, &format!("write {} /hello.txt", source.display()));
+    let filesystem = FileSystem::open(&image, 0).unwrap();
+    let entry = filesystem
+        .list_directory(filesystem.root_inode())
+        .unwrap()
+        .into_iter()
+        .find(|entry| entry.name == "hello.txt")
+        .unwrap();
+
+    let file = filesystem.open_file(entry.metadata_address).unwrap();
+    let mut first = [0_u8; 4];
+    let mut second = [0_u8; 32];
+    let first_count = file.read_at(0, &mut first).unwrap();
+    let second_count = file.read_at(4, &mut second).unwrap();
+
+    assert_eq!(file.size(), CONTENT.len() as u64);
+    assert_eq!(first_count, 4);
+    assert_eq!(&first, b"fore");
+    assert_eq!(second_count, CONTENT.len() - 4);
+    assert_eq!(&second[..second_count], &CONTENT[4..]);
+}

@@ -4,9 +4,9 @@ Linux-native digital forensics acquisition and evidence analysis platform.
 
 ## Current status
 
-Phase 0 is complete. Phase 1 core, Phase 2 acquisition/verification, and Phase 3
-partition/filesystem analysis are implemented and verified on the local
-workspace:
+Phase 0 is complete. Phase 1 core, Phase 2 acquisition/verification, Phase 3
+partition/filesystem analysis, and Phase 4 viewer/extraction are implemented
+and verified on the local workspace:
 
 - Rust workspace and domain primitives.
 - Streaming MD5, SHA-1, SHA-256, and SHA-512 hashing.
@@ -29,6 +29,12 @@ workspace:
 - File metadata, bounded file reads, and deleted-name status.
 - Explicit timestamp semantics for UTC and local wall-clock evidence times.
 - Package-config discovery of TSK instead of hardcoded host include paths.
+- Bounded hex and text previews with encoding detection.
+- File-signature identification and image/PDF preflight limits.
+- Capability-based extraction with traversal, symlink, conflict, and resource
+  protection.
+- Source/output SHA-256 verification for every successful export.
+- Extraction metadata and JSON, CSV, and HTML reports.
 
 Architecture and review gates:
 
@@ -38,10 +44,11 @@ Architecture and review gates:
 - [SECURITY_MODEL.md](SECURITY_MODEL.md)
 - [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)
 
-The verified Phase 1, Phase 2, and Phase 3 results are documented in
+The verified Phase 1 through Phase 4 results are documented in
 [docs/testing/phase1-results.md](docs/testing/phase1-results.md),
 [docs/testing/phase2-results.md](docs/testing/phase2-results.md), and
-[docs/testing/phase3-results.md](docs/testing/phase3-results.md). The detailed
+[docs/testing/phase3-results.md](docs/testing/phase3-results.md), plus
+[docs/testing/phase4-results.md](docs/testing/phase4-results.md). The detailed
 feasibility findings are in [FEASIBILITY_REPORT.md](FEASIBILITY_REPORT.md) and
 [docs/reverse-engineering/](docs/reverse-engineering/).
 
@@ -86,10 +93,11 @@ Observed on 2026-10-30:
 | Sleuth Kit runtime/tools | 4.12.1 |
 | libewf | 20140816 legacy package |
 | libfsntfs/libvshadow/libvhdi/libvmdk development headers | Missing |
-| EWF command-line tools | Missing |
+| EWF command-line tools | `ewfacquire`, `ewfverify`, and `ewfinfo` installed |
 | Qt PDF module and Flatpak/AppImage tools | Missing |
 | REA | 6.8.0, 229 tools advertised, Hopper available |
-| Ghidra, IDA, Kuna | Not configured |
+| Ghidra | 12.1.4 (`/opt/ghidra`) |
+| IDA, Kuna | Not configured |
 
 The FTK Imager 8.3.0.27 installer supplied in the workspace is intentionally
 untracked and excluded from the project. It is treated as authorized
@@ -107,8 +115,9 @@ investigation input only. It must not be committed or redistributed.
 
 ## Implementation gate
 
-Phases 1 through 3 are complete at the core-library level. The release
-dependency gate remains the pinned TSK and libewf build.
+Phases 1 through 4 are complete at the core-library level. The next code phase
+is the Qt desktop shell and sandboxed preview rendering. The release dependency
+gate remains the pinned TSK and libewf build.
 
 ## Documentation map
 
@@ -128,6 +137,8 @@ dependency gate remains the pinned TSK and libewf build.
   acquisition, E01, verification, report evidence, and limitations.
 - [docs/testing/phase3-results.md](docs/testing/phase3-results.md): Phase 3
   partition, filesystem, timestamp, and TSK dependency evidence.
+- [docs/testing/phase4-results.md](docs/testing/phase4-results.md): Phase 4
+  viewer, signature, extraction, report, and security evidence.
 - [SECURITY_MODEL.md](SECURITY_MODEL.md): threat model and mandatory controls.
 - [docs/reverse-engineering/](docs/reverse-engineering/): FTK Imager evidence,
   limitations, and compatibility status.

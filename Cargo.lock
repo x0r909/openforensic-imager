@@ -217,6 +217,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "extraction"
+version = "0.1.0"
+dependencies = [
+ "filesystem",
+ "forensic-core",
+ "hashing",
+ "libc",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "fallible-iterator"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -489,6 +502,7 @@ version = "0.1.0"
 dependencies = [
  "audit-log",
  "evidence-manager",
+ "extraction",
  "filesystem",
  "forensic-core",
  "forensic-fixtures",
@@ -496,8 +510,10 @@ dependencies = [
  "image-reader",
  "native-bindings",
  "partition-analyzer",
+ "reporting",
  "tempfile",
  "uuid",
+ "viewer",
 ]
 
 [[package]]
@@ -613,6 +629,7 @@ name = "reporting"
 version = "0.1.0"
 dependencies = [
  "acquisition",
+ "extraction",
  "forensic-core",
  "forensic-fixtures",
  "hashing",
@@ -917,6 +934,14 @@ name = "vcpkg"
 version = "0.2.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "accd4ea62f7bb7a82fe23066fb0957d48ef677f6eeb8215f372f52e48bb32426"
+
+[[package]]
+name = "viewer"
+version = "0.1.0"
+dependencies = [
+ "proptest",
+ "serde",
+]
 
 [[package]]
 name = "wait-timeout"

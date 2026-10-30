@@ -143,6 +143,7 @@ crates/
   image-reader/            RAW and EWF readers behind one trait
   partition-analyzer/      TSK volume-system wrapper
   filesystem/              TSK filesystem wrapper and timestamp provenance
+  viewer/                  Bounded hex, text, signature, and preview preflight
   evidence-manager/        SQLite schema, migrations, evidence records
   extraction/              Safe path construction and file export
   reporting/               JSON, CSV, HTML report models and renderers

@@ -17,5 +17,8 @@ image-reader = { path = "../../crates/image-reader" }
 native-bindings = { path = "../../crates/native-bindings" }
 filesystem = { path = "../../crates/filesystem" }
 partition-analyzer = { path = "../../crates/partition-analyzer" }
+viewer = { path = "../../crates/viewer" }
+extraction = { path = "../../crates/extraction" }
+reporting = { path = "../../crates/reporting" }
 tempfile.workspace = true
 uuid.workspace = true

@@ -2,7 +2,7 @@ use std::fmt;
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
-use tsk_bindings::{FileInfo, TskError, TskFilesystem, TskImage};
+use tsk_bindings::{FileInfo, TskError, TskFile, TskFilesystem, TskImage};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -89,6 +89,44 @@ pub struct FileSystem {
     kind: FileSystemKind,
 }
 
+pub struct EvidenceFile<'a> {
+    file: TskFile<'a>,
+    size: u64,
+}
+
+impl EvidenceFile<'_> {
+    pub fn size(&self) -> u64 {
+        self.size
+    }
+
+    pub fn read_at(&self, offset: u64, buffer: &mut [u8]) -> Result<usize, FileSystemError> {
+        if offset > self.size {
+            return Err(FileSystemError {
+                message: "file read offset exceeds the evidence file size".to_owned(),
+            });
+        }
+        if buffer.is_empty() {
+            return Ok(0);
+        }
+        let available =
+            usize::try_from((self.size - offset).min(buffer.len() as u64)).map_err(|_| {
+                FileSystemError {
+                    message: "file read length does not fit address space".to_owned(),
+                }
+            })?;
+        if available == 0 {
+            return Ok(0);
+        }
+        let count = self.file.read_at(offset, &mut buffer[..available])?;
+        if count == 0 {
+            return Err(FileSystemError {
+                message: "TSK returned an incomplete file read".to_owned(),
+            });
+        }
+        Ok(count)
+    }
+}
+
 impl fmt::Debug for FileSystem {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter
@@ -171,6 +209,12 @@ impl FileSystem {
             offset += count;
         }
         Ok(output)
+    }
+
+    pub fn open_file(&self, metadata_address: u64) -> Result<EvidenceFile<'_>, FileSystemError> {
+        let file = self.filesystem.file(metadata_address)?;
+        let size = file.info()?.size;
+        Ok(EvidenceFile { file, size })
     }
 
     fn convert_entry(&self, info: FileInfo) -> FileEntry {
