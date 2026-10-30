@@ -7,5 +7,6 @@ rust-version.workspace = true
 
 [dependencies]
 serde.workspace = true
+time.workspace = true
 uuid.workspace = true
 

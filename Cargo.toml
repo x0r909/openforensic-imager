@@ -4,6 +4,7 @@ members = [
     "crates/forensic-core",
     "crates/hashing",
     "crates/image-reader",
+    "crates/evidence-manager",
 ]
 
 [workspace.package]
@@ -16,9 +17,11 @@ digest = "0.11"
 libc = "0.2"
 md-5 = "0.11"
 proptest = "1"
+rusqlite = { version = "0.41", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 sha1 = "0.11"
 sha2 = "0.11"
 tempfile = "3"
+time = { version = "0.3", features = ["formatting", "parsing", "serde"] }
 uuid = { version = "1", features = ["serde", "v4"] }
 
