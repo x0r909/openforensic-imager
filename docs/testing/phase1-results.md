@@ -128,4 +128,3 @@ Result: exit 0.
 ## Exit status
 
 Phase 1 core acceptance criteria are met. Phase 2 has not started.
-

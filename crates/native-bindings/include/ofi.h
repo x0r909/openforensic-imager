@@ -44,4 +44,3 @@ const char *ofi_error_message(const ofi_error *error);
 #endif
 
 #endif
-

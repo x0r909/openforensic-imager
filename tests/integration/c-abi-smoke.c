@@ -45,4 +45,3 @@ int main(void) {
     unlink(db_path);
     return 0;
 }
-

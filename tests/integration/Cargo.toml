@@ -17,4 +17,3 @@ image-reader = { path = "../../crates/image-reader" }
 native-bindings = { path = "../../crates/native-bindings" }
 tempfile.workspace = true
 uuid.workspace = true
-
