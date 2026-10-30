@@ -1,0 +1,12 @@
+#!/bin/sh
+set -eu
+
+APPDIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+export LD_LIBRARY_PATH="$APPDIR/usr/lib:$APPDIR/usr/lib/openforensic-imager${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+export QT_PLUGIN_PATH="$APPDIR/usr/plugins"
+export QT_QPA_PLATFORM_PLUGIN_PATH="$APPDIR/usr/plugins/platforms"
+export QML_IMPORT_PATH="$APPDIR/usr/qml"
+export QML2_IMPORT_PATH="$APPDIR/usr/qml"
+export QT_QUICK_CONTROLS_STYLE=Basic
+
+exec "$APPDIR/usr/bin/openforensic-imager" "$@"

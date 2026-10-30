@@ -35,6 +35,9 @@ qrc_*.cpp
 # Packaging staging
 /packaging/staging/
 /packaging/AppDir/
+/packaging/output/
+/packaging/build/
+/packaging/cache/
 
 # Agent execution scratch
 /.superpowers/

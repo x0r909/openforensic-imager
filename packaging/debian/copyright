@@ -1,0 +1,23 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: OpenForensic Imager
+Source: https://github.com/x0r909/openforensic-imager
+
+Files: *
+Copyright: 2026 OpenForensic Imager contributors
+License: UNLICENSED
+ The OpenForensic Imager project license has not been selected. This package is
+ a development artifact and is not licensed for redistribution.
+
+Files: packaging/common/openforensic-imager.metainfo.xml
+Copyright: 2026 OpenForensic Imager contributors
+License: CC0-1.0
+ The AppStream metadata is dedicated to the public domain under CC0-1.0.
+
+Files: packaging/common/openforensic-imager.svg
+Copyright: 2026 OpenForensic Imager contributors
+License: UNLICENSED
+ Text placeholder asset. Replace or approve before release.
+
+Third-party components retain their upstream licenses. See
+/usr/share/doc/openforensic-imager/THIRD_PARTY.md and the generated CycloneDX
+SBOM for the package-specific inventory.

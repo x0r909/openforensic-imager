@@ -1,0 +1,14 @@
+[Desktop Entry]
+Type=Application
+Name=OpenForensic Imager
+GenericName=Digital Forensics Workbench
+Comment=Acquire and inspect disk images with read-only evidence access
+Exec=openforensic-imager %F
+TryExec=openforensic-imager
+Icon=io.github.x0r909.OpenForensicImager
+Terminal=false
+Categories=System;Security;
+Keywords=forensics;evidence;disk;image;hash;
+StartupNotify=true
+StartupWMClass=openforensic-imager
+X-AppImage-Version=0.1.0

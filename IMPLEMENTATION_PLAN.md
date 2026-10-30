@@ -6,7 +6,7 @@
 > checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Deliver a tested Linux-native forensic acquisition and analysis
-application, with Phases 1 through 6 implemented and their remaining release
+application, with Phases 1 through 7 implemented and their remaining release
 blockers documented.
 
 **Architecture:** Rust libraries provide integrity-critical domain logic,
@@ -404,7 +404,7 @@ views, and full accessibility-tree testing remain open.
   hardware.
 
 Phase 6 validation is complete at the executable coverage level. The production
-security gate and Phase 7 packaging gate remain open.
+security gate remains open.
 
 ## Phase 7 execution outline
 
@@ -414,6 +414,37 @@ security gate and Phase 7 packaging gate remain open.
 4. SBOM and third-party notices.
 5. Clean-system installation and smoke tests.
 6. Installation, recovery, and reproducibility documentation.
+
+### Phase 7 status
+
+- [x] Standardize the desktop, icon, AppStream, and Flatpak application ID as
+  `io.github.x0r909.OpenForensicImager`.
+- [x] Add Release Cargo integration and CMake install rules for the executable,
+  native bindings, desktop entry, icon, AppStream metadata, and notices.
+- [x] Build a development DEB with Ubuntu runtime dependencies and an extracted
+  root self-test.
+- [x] Build an AppImage with Qt plugins, QML modules, native bindings, a pinned
+  AppImage build-tool checksum, and an artifact self-test.
+- [x] Build an analysis-only Flatpak with no `/dev` access, test it in the build
+  sandbox, and install and run it with an isolated user data directory.
+- [x] Generate a CycloneDX 1.6 SBOM and SHA-256 files for package artifacts.
+- [x] Add layout tests for desktop metadata, AppStream metadata, scripts, and
+  required notices.
+- [x] Add a two-build SHA-256 and size comparison for DEB and AppImage using
+  `SOURCE_DATE_EPOCH=1793318400`.
+- [x] Document installation, removal, case-data recovery, and reproducible
+  build commands.
+- [ ] Install and exercise the DEB on a clean Ubuntu VM.
+- [ ] Verify Debian, Arch Linux, Fedora, and ARM64 packaging.
+- [ ] Run `lintian` and complete downstream distribution policy review.
+- [ ] Replace the placeholder icon, select the project license, and complete
+  native dependency redistribution review.
+- [ ] Include Flatpak and SBOM output in the reproducibility comparison.
+- [ ] Run a packaged physical-device acquisition with a hardware write blocker.
+
+Phase 7 is complete as a locally tested development packaging increment. A
+production distribution gate remains open until the clean-system,
+cross-distribution, licensing, native dependency pinning, and device tests pass.
 
 ## Self-review
 

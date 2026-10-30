@@ -1,0 +1,6 @@
+--share=ipc
+--socket=fallback-x11
+--socket=wayland
+--filesystem=home
+--talk-name=org.freedesktop.portal.Desktop
+--env=QT_QUICK_CONTROLS_STYLE=Basic

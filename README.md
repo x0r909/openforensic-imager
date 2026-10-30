@@ -6,8 +6,9 @@ Linux-native digital forensics acquisition and evidence analysis platform.
 
 Phase 0 is complete. Phase 1 core, Phase 2 acquisition/verification, Phase 3
 partition/filesystem analysis, Phase 4 viewer/extraction, and Phase 5 desktop
-workflows are implemented. Phase 6 validation has executable security,
-differential, audit, fuzz, race, and capacity evidence on the local workspace:
+workflows are implemented. Phase 6 has executable security, differential, audit,
+fuzz, race, and capacity evidence. Phase 7 has DEB, AppImage, and analysis-only
+Flatpak builds with local installation, content, and reproducibility tests:
 
 - Rust workspace and domain primitives.
 - Streaming MD5, SHA-1, SHA-256, and SHA-512 hashing.
@@ -54,6 +55,16 @@ differential, audit, fuzz, race, and capacity evidence on the local workspace:
   source descriptors.
 - Repeated extraction-root replacement tests and sparse 8 GiB bounded-memory
   random-access reads.
+- Release CMake install rules with a private native-binding directory and
+  relocated runtime search path.
+- A development DEB with resolved Ubuntu runtime dependencies, desktop entry,
+  icon, AppStream metadata, legal notices, and SBOM.
+- A portable AppImage with bundled Qt runtime, QML modules, forensic libraries,
+  pinned build-tool checksum, and artifact self-test.
+- An analysis-only Flatpak with no device access, isolated user installation,
+  and runtime self-test.
+- Two-build SHA-256 and size comparison for DEB and AppImage using a fixed
+  source epoch.
 
 Architecture and review gates:
 
@@ -68,8 +79,9 @@ The verified Phase 1 through Phase 6 results are documented in
 [docs/testing/phase2-results.md](docs/testing/phase2-results.md), and
 [docs/testing/phase3-results.md](docs/testing/phase3-results.md), plus
 [docs/testing/phase4-results.md](docs/testing/phase4-results.md),
-[docs/testing/phase5-ui-results.md](docs/testing/phase5-ui-results.md), and
-[docs/testing/phase6-results.md](docs/testing/phase6-results.md). The detailed
+[docs/testing/phase5-ui-results.md](docs/testing/phase5-ui-results.md),
+[docs/testing/phase6-results.md](docs/testing/phase6-results.md), and
+[docs/testing/phase7-results.md](docs/testing/phase7-results.md). The detailed
 feasibility findings are in [FEASIBILITY_REPORT.md](FEASIBILITY_REPORT.md) and
 [docs/reverse-engineering/](docs/reverse-engineering/).
 
@@ -136,13 +148,14 @@ investigation input only. It must not be committed or redistributed.
 
 ## Implementation gate
 
-Phases 1 through 5 are implemented at the core and desktop-workflow level.
-Phase 6 controls and tests are implemented, but the production release gate is
-not yet passed. The analysis worker sandbox exists as a tested crate and is not
-yet wired into the desktop parser dispatch path. Sanitizer and scheduled fuzz
-runs also remain open. Packaging and reproducible clean-system installation are
-Phase 7 work. The release dependency gate remains the pinned TSK and libewf
-build.
+Phases 1 through 7 are implemented at the local development level. The
+production release gate is not yet passed. The analysis worker sandbox exists as
+a tested crate and is not yet wired into the desktop parser dispatch path.
+Sanitizer and scheduled fuzz runs also remain open. Packaging artifacts are
+locally tested, but clean-VM, secondary-distribution, lintian, and physical
+device package tests have not run. The DEB and AppImage currently resolve host
+TSK and libewf versions instead of the pinned release build described in the
+architecture.
 
 ## Documentation map
 
@@ -171,6 +184,12 @@ build.
 - [docs/testing/phase6-results.md](docs/testing/phase6-results.md): Phase 6
   audit, fuzz smoke, differential, race, source-open, capacity, and CTest
   evidence.
+- [docs/testing/phase7-results.md](docs/testing/phase7-results.md): Phase 7
+  artifact, installation, SBOM, and reproducibility evidence.
+- [docs/packaging/INSTALL.md](docs/packaging/INSTALL.md): installation,
+  removal, Flatpak limits, and non-destructive case recovery.
+- [docs/packaging/REPRODUCIBLE_BUILD.md](docs/packaging/REPRODUCIBLE_BUILD.md):
+  dependency set, fixed timestamp, build commands, and reproducibility scope.
 - [docs/security/phase6-review.md](docs/security/phase6-review.md): Phase 6
   security findings, open release blockers, and residual risks.
 - [SECURITY_MODEL.md](SECURITY_MODEL.md): threat model and mandatory controls.

@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512"
+     viewBox="0 0 512 512" role="img" aria-labelledby="title">
+  <title id="title">OpenForensic Imager text placeholder</title>
+  <rect width="512" height="512" rx="72" fill="#f4f1ea"/>
+  <rect x="32" y="32" width="448" height="448" rx="48"
+        fill="none" stroke="#8a4b00" stroke-width="8"/>
+  <text x="256" y="205" text-anchor="middle" fill="#1c1b18"
+        font-family="Noto Sans, sans-serif" font-size="66" font-weight="600">
+    OpenForensic
+  </text>
+  <text x="256" y="292" text-anchor="middle" fill="#1c1b18"
+        font-family="Noto Sans, sans-serif" font-size="72" font-weight="600">
+    Imager
+  </text>
+  <text x="256" y="372" text-anchor="middle" fill="#6f6a5e"
+        font-family="Noto Sans Mono, monospace" font-size="24">
+    TEXT PLACEHOLDER
+  </text>
+</svg>

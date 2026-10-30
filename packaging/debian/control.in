@@ -1,0 +1,16 @@
+Package: openforensic-imager
+Version: @VERSION@-1
+Section: utils
+Priority: optional
+Architecture: amd64
+Maintainer: OpenForensic Imager Maintainers <maintainer@invalid>
+Depends: @DEPENDS@
+Installed-Size: @INSTALLED_SIZE@
+Homepage: https://github.com/x0r909/openforensic-imager
+Description: Linux-native digital forensics acquisition workbench
+ OpenForensic Imager creates and verifies RAW and EWF1 images, analyzes MBR and
+ GPT partition tables, browses supported filesystems through The Sleuth Kit, and
+ records case metadata and audit events.
+ .
+ This is a Phase 7 development package. The project license is undecided and the
+ parser worker isolation release blocker remains open.

@@ -1,0 +1,4 @@
+# Pinned packaging tool source. Replace only with a reviewed release and hash.
+APPIMAGETOOL_URL=https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+APPIMAGETOOL_SHA256=793fca0ce4bcc309dc65d3f66669f58e3755643e4dadbe03932e7b436128494f
+APPIMAGETOOL_NAME=appimagetool-x86_64.AppImage
