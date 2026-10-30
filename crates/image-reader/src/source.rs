@@ -1,15 +1,18 @@
 use std::fmt;
 
 use forensic_core::ByteRange;
+use serde::{Deserialize, Serialize};
 
 use crate::ReadError;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ImageFormat {
     Raw,
+    Ewf1E01,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SourceFingerprint {
     device: u64,
     inode: u64,
@@ -100,6 +103,7 @@ pub enum ImageErrorCode {
     OutOfRange,
     BufferLengthMismatch,
     ConcurrentModification,
+    Backend,
     Io,
 }
 
@@ -123,6 +127,10 @@ impl ImageError {
 
     pub fn message(&self) -> &str {
         &self.message
+    }
+
+    pub fn backend(message: impl Into<String>) -> Self {
+        Self::new(ImageErrorCode::Backend, message)
     }
 }
 

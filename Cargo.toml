@@ -7,6 +7,9 @@ members = [
     "crates/evidence-manager",
     "crates/audit-log",
     "crates/native-bindings",
+    "crates/libewf-bindings",
+    "crates/acquisition",
+    "crates/reporting",
     "tests/fixtures",
     "tests/integration",
 ]
