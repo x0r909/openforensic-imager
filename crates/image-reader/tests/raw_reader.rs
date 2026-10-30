@@ -73,7 +73,10 @@ fn file_change_after_open_is_reported() {
     std::fs::write(&path, b"data").unwrap();
     let reader = RawReader::open_read_only(&path).unwrap();
 
-    let mut file = std::fs::OpenOptions::new().append(true).open(&path).unwrap();
+    let mut file = std::fs::OpenOptions::new()
+        .append(true)
+        .open(&path)
+        .unwrap();
     std::io::Write::write_all(&mut file, b"!").unwrap();
     file.sync_all().unwrap();
 
@@ -83,4 +86,3 @@ fn file_change_after_open_is_reported() {
 
     assert_eq!(error.code(), ImageErrorCode::ConcurrentModification);
 }
-

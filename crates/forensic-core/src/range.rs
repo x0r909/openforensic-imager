@@ -46,4 +46,3 @@ impl ByteRange {
         self.offset + self.length
     }
 }
-

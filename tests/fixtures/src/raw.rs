@@ -185,9 +185,9 @@ fn write_segment(
             let mut state = SplitMix64(seed ^ segment_index.wrapping_mul(0x9e37_79b9_7f4a_7c15));
             let mut buffer = vec![0_u8; *block_size as usize];
             for block in data_blocks {
-                let offset = block
-                    .checked_mul(u64::from(*block_size))
-                    .ok_or_else(|| FixtureError::InvalidLayout("sparse offset overflow".to_owned()))?;
+                let offset = block.checked_mul(u64::from(*block_size)).ok_or_else(|| {
+                    FixtureError::InvalidLayout("sparse offset overflow".to_owned())
+                })?;
                 let count = (length - offset).min(u64::from(*block_size)) as usize;
                 fill_pseudorandom(&mut buffer[..count], &mut state);
                 file.seek(SeekFrom::Start(offset))?;
@@ -232,4 +232,3 @@ impl SplitMix64 {
         value ^ (value >> 31)
     }
 }
-

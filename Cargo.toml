@@ -8,6 +8,7 @@ members = [
     "crates/audit-log",
     "crates/native-bindings",
     "tests/fixtures",
+    "tests/integration",
 ]
 
 [workspace.package]

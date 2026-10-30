@@ -63,4 +63,3 @@ impl<'de> Deserialize<'de> for UtcTimestamp {
         value.parse().map_err(D::Error::custom)
     }
 }
-

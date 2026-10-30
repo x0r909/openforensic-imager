@@ -10,9 +10,7 @@ use std::path::Path;
 use forensic_core::{CaseId, JobId, UtcTimestamp};
 use serde::{Deserialize, Serialize};
 
-use chain::{
-    append_record, hash_record, lock_exclusive, lock_shared, read_last_record, verify,
-};
+use chain::{append_record, hash_record, lock_exclusive, lock_shared, read_last_record, verify};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AuditEvent {
@@ -135,12 +133,8 @@ impl AuditLog {
             .last_sequence
             .checked_add(1)
             .ok_or_else(|| AuditError::new(AuditErrorCode::Corrupt, "audit sequence overflow"))?;
-        let record = chain::AuditRecord::new(
-            sequence,
-            UtcTimestamp::now(),
-            self.last_hash.clone(),
-            event,
-        );
+        let record =
+            chain::AuditRecord::new(sequence, UtcTimestamp::now(), self.last_hash.clone(), event);
         let record_hash = hash_record(&record)?;
         append_record(&mut self.file, &record, &record_hash)?;
         self.file.flush().map_err(map_io)?;
@@ -163,5 +157,3 @@ impl AuditLog {
 fn map_io(error: std::io::Error) -> AuditError {
     AuditError::new(AuditErrorCode::Io, error.to_string())
 }
-
-

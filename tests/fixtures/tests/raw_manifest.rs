@@ -1,7 +1,7 @@
 use std::path::Path;
 use std::process::Command;
 
-use forensic_fixtures::{FixtureManifest, generate_raw_fixture, RawLayout};
+use forensic_fixtures::{FixtureManifest, RawLayout, generate_raw_fixture};
 use tempfile::tempdir;
 
 fn sha256sum(path: &Path) -> String {
@@ -19,8 +19,7 @@ fn sha256sum(path: &Path) -> String {
 fn empty_layout_creates_an_empty_segment() {
     let directory = tempdir().unwrap();
 
-    let manifest =
-        generate_raw_fixture(directory.path(), 1, RawLayout::Empty).unwrap();
+    let manifest = generate_raw_fixture(directory.path(), 1, RawLayout::Empty).unwrap();
 
     assert_eq!(manifest.byte_length, 0);
     assert_eq!(manifest.segments.len(), 1);
@@ -112,10 +111,7 @@ fn dense_layout_matches_committed_manifest_vector() {
     )
     .unwrap();
 
-    let expected: FixtureManifest = serde_json::from_str(include_str!(
-        "../manifests/phase1-dense-seed42.json"
-    ))
-    .unwrap();
+    let expected: FixtureManifest =
+        serde_json::from_str(include_str!("../manifests/phase1-dense-seed42.json")).unwrap();
     assert_eq!(manifest, expected);
 }
-

@@ -1,6 +1,4 @@
-use evidence_manager::{
-    AddEvidence, CaseStore, CreateCase, SourceSnapshot, StoreErrorCode,
-};
+use evidence_manager::{AddEvidence, CaseStore, CreateCase, SourceSnapshot, StoreErrorCode};
 use forensic_core::{CaseId, EvidenceId};
 use tempfile::tempdir;
 use uuid::Uuid;
@@ -142,4 +140,3 @@ fn reopening_preserves_evidence_identifier_and_source_snapshot() {
     assert_eq!(evidence[0].source.length, 4096);
     assert!(evidence[0].source.read_only);
 }
-

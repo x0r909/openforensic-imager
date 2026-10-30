@@ -26,20 +26,18 @@ impl SourceFingerprint {
         device: u64,
         inode: u64,
         length: u64,
-        mtime_seconds: i64,
-        mtime_nanoseconds: i64,
-        ctime_seconds: i64,
-        ctime_nanoseconds: i64,
+        mtime: (i64, i64),
+        ctime: (i64, i64),
         read_only: bool,
     ) -> Self {
         Self {
             device,
             inode,
             length,
-            mtime_seconds,
-            mtime_nanoseconds,
-            ctime_seconds,
-            ctime_nanoseconds,
+            mtime_seconds: mtime.0,
+            mtime_nanoseconds: mtime.1,
+            ctime_seconds: ctime.0,
+            ctime_nanoseconds: ctime.1,
             read_only,
         }
     }
@@ -54,6 +52,14 @@ impl SourceFingerprint {
 
     pub fn length(&self) -> u64 {
         self.length
+    }
+
+    pub fn mtime_nanoseconds(&self) -> i64 {
+        self.mtime_nanoseconds
+    }
+
+    pub fn ctime_nanoseconds(&self) -> i64 {
+        self.ctime_nanoseconds
     }
 
     pub fn read_only(&self) -> bool {
@@ -119,4 +125,3 @@ impl fmt::Display for ImageError {
 }
 
 impl std::error::Error for ImageError {}
-

@@ -84,4 +84,3 @@ fn sha256_matches_coreutils_on_repository_readme() {
 
     assert_eq!(actual, expected);
 }
-

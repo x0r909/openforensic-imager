@@ -1,15 +1,15 @@
 use std::fs::{File, OpenOptions};
 use std::io;
-use std::os::unix::fs::{FileTypeExt, MetadataExt, OpenOptionsExt};
 use std::os::unix::fs::FileExt;
+use std::os::unix::fs::{FileTypeExt, MetadataExt, OpenOptionsExt};
 use std::path::Path;
 
 use forensic_core::ByteRange;
 
+use crate::ReadError;
 use crate::source::{
     ImageError, ImageErrorCode, ImageFormat, ImageMetadata, ImageReader, SourceFingerprint,
 };
-use crate::ReadError;
 
 const DEFAULT_SECTOR_SIZE: u32 = 512;
 
@@ -41,7 +41,8 @@ impl RawReader {
     }
 
     fn ensure_unchanged(&self) -> Result<(), ImageError> {
-        let current = capture_fingerprint(&self.file, &self.file.metadata().map_err(map_io_error)?)?;
+        let current =
+            capture_fingerprint(&self.file, &self.file.metadata().map_err(map_io_error)?)?;
         if current != self.fingerprint {
             return Err(ImageError::new(
                 ImageErrorCode::ConcurrentModification,
@@ -113,10 +114,8 @@ fn capture_fingerprint(
         metadata.dev(),
         metadata.ino(),
         metadata.len(),
-        metadata.mtime(),
-        metadata.mtime_nsec(),
-        metadata.ctime(),
-        metadata.ctime_nsec(),
+        (metadata.mtime(), metadata.mtime_nsec()),
+        (metadata.ctime(), metadata.ctime_nsec()),
         read_only,
     ))
 }
@@ -134,4 +133,3 @@ fn map_open_error(error: io::Error) -> ImageError {
 fn map_io_error(error: io::Error) -> ImageError {
     ImageError::new(ImageErrorCode::Io, error.to_string())
 }
-

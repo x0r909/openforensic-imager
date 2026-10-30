@@ -169,4 +169,3 @@ fn truncated_record_breaks_the_chain() {
 
     assert!(!status.is_valid());
 }
-

@@ -113,12 +113,12 @@ tests/integration/phase1_core.rs
   Result<ByteRange, CoreError>`.
 - Produces `CoreError` with a stable `ErrorCode`, context, and retryability.
 
-- [ ] **Step 1: Create the Cargo workspace and empty crate**
-- [ ] **Step 2: Write failing tests for UUID round trips, zero-length ranges, boundary ranges, and overflow rejection**
-- [ ] **Step 3: Run the tests and verify they fail**
-- [ ] **Step 4: Implement newtype IDs, `ByteRange`, and `CoreError`**
-- [ ] **Step 5: Run `cargo test -p forensic-core` and verify all tests pass**
-- [ ] **Step 6: Commit the task**
+- [x] **Step 1: Create the Cargo workspace and empty crate**
+- [x] **Step 2: Write failing tests for UUID round trips, zero-length ranges, boundary ranges, and overflow rejection**
+- [x] **Step 3: Run the tests and verify they fail**
+- [x] **Step 4: Implement newtype IDs, `ByteRange`, and `CoreError`**
+- [x] **Step 5: Run `cargo test -p forensic-core` and verify all tests pass**
+- [x] **Step 6: Commit the task**
 
 ### Task 2: Streaming hash engine
 
@@ -140,13 +140,13 @@ tests/integration/phase1_core.rs
 - Produces `StreamingHasher::update(&mut self, bytes: &[u8])`.
 - Produces `StreamingHasher::finish(self) -> BTreeMap<HashAlgorithm, HashDigest>`.
 
-- [ ] **Step 1: Add known-answer tests for empty input and `abc` for all four algorithms**
-- [ ] **Step 2: Run the tests and verify they fail**
-- [ ] **Step 3: Implement digest encoding and streaming contexts**
-- [ ] **Step 4: Add a property test that randomized chunking matches one-shot hashing**
-- [ ] **Step 5: Run `cargo test -p hashing` and verify all tests pass**
-- [ ] **Step 6: Compare SHA-256 of a generated file with `sha256sum`**
-- [ ] **Step 7: Commit the task**
+- [x] **Step 1: Add known-answer tests for empty input and `abc` for all four algorithms**
+- [x] **Step 2: Run the tests and verify they fail**
+- [x] **Step 3: Implement digest encoding and streaming contexts**
+- [x] **Step 4: Add a property test that randomized chunking matches one-shot hashing**
+- [x] **Step 5: Run `cargo test -p hashing` and verify all tests pass**
+- [x] **Step 6: Compare SHA-256 of a generated file with `sha256sum`**
+- [x] **Step 7: Commit the task**
 
 ### Task 3: Read-only RAW image reader
 
@@ -170,13 +170,13 @@ tests/integration/phase1_core.rs
 - Produces `SourceFingerprint` containing device or file identity, length,
   modification identity, and read-only status.
 
-- [ ] **Step 1: Write failing tests for a missing file, an empty file, a full valid read, and an out-of-range read**
-- [ ] **Step 2: Run the tests and verify they fail**
-- [ ] **Step 3: Implement source opening with `O_RDONLY | O_CLOEXEC` and metadata capture**
-- [ ] **Step 4: Implement `pread`-based exact range reads with checked offsets**
-- [ ] **Step 5: Add a test that changes the file during a read session and requires a typed concurrent-modification error**
-- [ ] **Step 6: Run `cargo test -p image-reader` and verify all tests pass**
-- [ ] **Step 7: Commit the task**
+- [x] **Step 1: Write failing tests for a missing file, an empty file, a full valid read, and an out-of-range read**
+- [x] **Step 2: Run the tests and verify they fail**
+- [x] **Step 3: Implement source opening with `O_RDONLY | O_CLOEXEC` and metadata capture**
+- [x] **Step 4: Implement `pread`-based exact range reads with checked offsets**
+- [x] **Step 5: Add a test that changes the file during a read session and requires a typed concurrent-modification error**
+- [x] **Step 6: Run `cargo test -p image-reader` and verify all tests pass**
+- [x] **Step 7: Commit the task**
 
 ### Task 4: Evidence metadata and migrations
 
@@ -196,13 +196,13 @@ tests/integration/phase1_core.rs
 - Produces `CaseStore::add_evidence(input: AddEvidence) -> Result<EvidenceRecord, StoreError>`.
 - Produces `CaseStore::list_evidence(case_id: CaseId) -> Result<Vec<EvidenceRecord>, StoreError>`.
 
-- [ ] **Step 1: Write failing tests for schema creation, foreign keys, duplicate IDs, UTC timestamps, and transactional evidence insertion**
-- [ ] **Step 2: Run the tests and verify they fail**
-- [ ] **Step 3: Implement versioned migrations and the minimum Phase 1 tables**
-- [ ] **Step 4: Enable WAL and `synchronous = FULL` for evidence-state commits**
-- [ ] **Step 5: Add a test that reopening the database preserves source fingerprint and evidence identifiers**
-- [ ] **Step 6: Run `cargo test -p evidence-manager` and verify all tests pass**
-- [ ] **Step 7: Commit the task**
+- [x] **Step 1: Write failing tests for schema creation, foreign keys, duplicate IDs, UTC timestamps, and transactional evidence insertion**
+- [x] **Step 2: Run the tests and verify they fail**
+- [x] **Step 3: Implement versioned migrations and the minimum Phase 1 tables**
+- [x] **Step 4: Enable WAL and `synchronous = FULL` for evidence-state commits**
+- [x] **Step 5: Add a test that reopening the database preserves source fingerprint and evidence identifiers**
+- [x] **Step 6: Run `cargo test -p evidence-manager` and verify all tests pass**
+- [x] **Step 7: Commit the task**
 
 ### Task 5: Append-only audit log
 
@@ -221,14 +221,14 @@ tests/integration/phase1_core.rs
 - Produces `AuditLog::verify_chain(path: &Path) -> Result<AuditChainStatus, AuditError>`.
 - Produces `AuditReceipt { sequence: u64, record_hash: Sha256Digest }`.
 
-- [ ] **Step 1: Write failing tests for monotonic sequence, previous-hash linkage, UTF-8 escaping, and fsync-before-return**
-- [ ] **Step 2: Run the tests and verify they fail**
-- [ ] **Step 3: Implement canonical record encoding and SHA-256 chain hashing**
-- [ ] **Step 4: Implement exclusive-file-lock append and flush**
-- [ ] **Step 5: Add tamper tests for edited, reordered, deleted, and truncated records**
-- [ ] **Step 6: Add a concurrent writer test with one accepted writer and typed rejection for competing writers**
-- [ ] **Step 7: Run `cargo test -p audit-log` and verify all tests pass**
-- [ ] **Step 8: Commit the task**
+- [x] **Step 1: Write failing tests for monotonic sequence, previous-hash linkage, UTF-8 escaping, and fsync-before-return**
+- [x] **Step 2: Run the tests and verify they fail**
+- [x] **Step 3: Implement canonical record encoding and SHA-256 chain hashing**
+- [x] **Step 4: Implement exclusive-file-lock append and flush**
+- [x] **Step 5: Add tamper tests for edited, reordered, deleted, and truncated records**
+- [x] **Step 6: Add a concurrent writer test with one accepted writer and typed rejection for competing writers**
+- [x] **Step 7: Run `cargo test -p audit-log` and verify all tests pass**
+- [x] **Step 8: Commit the task**
 
 ### Task 6: Minimal C ABI
 
@@ -247,13 +247,13 @@ tests/integration/phase1_core.rs
 - Produces owned byte and error release functions.
 - Consumes Serde request and response types from `forensic-core`.
 
-- [ ] **Step 1: Write failing Rust tests for null pointers, invalid lengths, invalid UTF-8, and panic containment**
-- [ ] **Step 2: Run the tests and verify they fail**
-- [ ] **Step 3: Implement the ABI version check and owned response envelope**
-- [ ] **Step 4: Generate the C header and compile the C smoke harness**
-- [ ] **Step 5: Run the C harness and verify allocation and release ownership**
-- [ ] **Step 6: Run `cargo test -p native-bindings` and verify all tests pass**
-- [ ] **Step 7: Commit the task**
+- [x] **Step 1: Write failing Rust tests for null pointers, invalid lengths, invalid UTF-8, and panic containment**
+- [x] **Step 2: Run the tests and verify they fail**
+- [x] **Step 3: Implement the ABI version check and owned response envelope**
+- [x] **Step 4: Generate the C header and compile the C smoke harness**
+- [x] **Step 5: Run the C harness and verify allocation and release ownership**
+- [x] **Step 6: Run `cargo test -p native-bindings` and verify all tests pass**
+- [x] **Step 7: Commit the task**
 
 ### Task 7: Deterministic RAW fixture generator
 
@@ -270,11 +270,11 @@ tests/integration/phase1_core.rs
 - Produces `FixtureManifest` with byte length, block size, segment sizes, file
   hashes, and generator version.
 
-- [ ] **Step 1: Write failing tests for empty, sparse, dense, and split RAW layouts**
-- [ ] **Step 2: Implement deterministic pseudorandom generation from a fixed seed**
-- [ ] **Step 3: Assert regenerated fixtures match their manifests**
-- [ ] **Step 4: Verify fixture hashes with `sha256sum`**
-- [ ] **Step 5: Commit the generator and manifests, not generated binaries**
+- [x] **Step 1: Write failing tests for empty, sparse, dense, and split RAW layouts**
+- [x] **Step 2: Implement deterministic pseudorandom generation from a fixed seed**
+- [x] **Step 3: Assert regenerated fixtures match their manifests**
+- [x] **Step 4: Verify fixture hashes with `sha256sum`**
+- [x] **Step 5: Commit the generator and manifests, not generated binaries**
 
 ### Task 8: Phase 1 integration test
 
@@ -287,13 +287,13 @@ tests/integration/phase1_core.rs
 
 - Consumes all Phase 1 crates.
 
-- [ ] **Step 1: Write a test that creates a case, hashes a RAW fixture, opens it read-only, reads selected ranges, records evidence metadata, and appends audit events**
-- [ ] **Step 2: Assert the source fingerprint and source hash before and after are unchanged**
-- [ ] **Step 3: Assert the database and audit log reopen successfully**
-- [ ] **Step 4: Run `cargo test --workspace` and verify all tests pass**
-- [ ] **Step 5: Run `cargo clippy --workspace --all-targets -- -D warnings`**
-- [ ] **Step 6: Run the integration test under AddressSanitizer where supported**
-- [ ] **Step 7: Commit the Phase 1 integration**
+- [x] **Step 1: Write a test that creates a case, hashes a RAW fixture, opens it read-only, reads selected ranges, records evidence metadata, and appends audit events**
+- [x] **Step 2: Assert the source fingerprint and source hash before and after are unchanged**
+- [x] **Step 3: Assert the database and audit log reopen successfully**
+- [x] **Step 4: Run `cargo test --workspace` and verify all tests pass**
+- [x] **Step 5: Run `cargo clippy --workspace --all-targets -- -D warnings`**
+- [x] **Step 6: Run the integration test under AddressSanitizer where supported**
+- [x] **Step 7: Commit the Phase 1 integration**
 
 ## Phase 2 execution outline
 

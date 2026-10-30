@@ -7,9 +7,7 @@ use forensic_core::{CaseId, JobId, UtcTimestamp};
 use hashing::{HashAlgorithm, StreamingHasher};
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    AuditChainStatus, AuditError, AuditErrorCode, AuditEvent, Sha256Digest,
-};
+use crate::{AuditChainStatus, AuditError, AuditErrorCode, AuditEvent, Sha256Digest};
 
 const SCHEMA_MAJOR: u32 = 1;
 const SCHEMA_MINOR: u32 = 0;
@@ -147,9 +145,7 @@ fn lock_file(file: &File, operation: i32) -> Result<(), AuditError> {
     }
 }
 
-pub(crate) fn read_last_record(
-    file: &mut File,
-) -> Result<(u64, Option<Sha256Digest>), AuditError> {
+pub(crate) fn read_last_record(file: &mut File) -> Result<(u64, Option<Sha256Digest>), AuditError> {
     let length = file.metadata().map_err(map_io)?.len();
     if length == 0 {
         return Ok((0, None));
@@ -168,7 +164,10 @@ pub(crate) fn read_last_record(
     while tail.last() == Some(&b'\n') {
         tail.pop();
     }
-    let line_start = tail.iter().rposition(|byte| *byte == b'\n').map_or(0, |index| index + 1);
+    let line_start = tail
+        .iter()
+        .rposition(|byte| *byte == b'\n')
+        .map_or(0, |index| index + 1);
     let line = &tail[line_start..];
     let record: AuditRecord = serde_json::from_slice(line).map_err(|error| {
         AuditError::new(
@@ -222,7 +221,10 @@ pub(crate) fn verify(file: File) -> Result<AuditChainStatus, AuditError> {
             break;
         }
         if record.previous_hash != previous_hash {
-            reason = Some(format!("sequence {} has a broken hash link", record.sequence));
+            reason = Some(format!(
+                "sequence {} has a broken hash link",
+                record.sequence
+            ));
             break;
         }
         let expected_hash = hash_record(&record)?;
@@ -245,4 +247,3 @@ pub(crate) fn verify(file: File) -> Result<AuditChainStatus, AuditError> {
 fn map_io(error: std::io::Error) -> AuditError {
     AuditError::new(AuditErrorCode::Io, error.to_string())
 }
-

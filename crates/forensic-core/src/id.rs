@@ -51,4 +51,3 @@ uuid_id!(EvidenceId);
 uuid_id!(SourceId);
 uuid_id!(ArtifactId);
 uuid_id!(JobId);
-

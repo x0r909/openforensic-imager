@@ -2,8 +2,8 @@ use std::ffi::CStr;
 use std::ptr;
 
 use native_bindings::{
-    ofi_abi_version, ofi_bytes_free, ofi_case_create, ofi_error_code, ofi_error_free,
-    ofi_evidence_add, ofi_status, ofi_error,
+    ofi_abi_version, ofi_bytes_free, ofi_case_create, ofi_error, ofi_error_code, ofi_error_free,
+    ofi_evidence_add, ofi_status,
 };
 use tempfile::tempdir;
 
@@ -26,15 +26,8 @@ fn null_request_is_rejected_without_dereference() {
     let mut response_len = 0;
     let mut error = ptr::null_mut();
 
-    let status = unsafe {
-        ofi_case_create(
-            ptr::null(),
-            0,
-            &mut response,
-            &mut response_len,
-            &mut error,
-        )
-    };
+    let status =
+        unsafe { ofi_case_create(ptr::null(), 0, &mut response, &mut response_len, &mut error) };
 
     assert_eq!(status, ofi_status::OFI_STATUS_INVALID_ARGUMENT);
     assert!(response.is_null());
@@ -138,4 +131,3 @@ fn case_and_evidence_requests_return_owned_json() {
     assert_eq!(response_json["body"]["id"], evidence_id);
     unsafe { ofi_bytes_free(response, response_len) };
 }
-

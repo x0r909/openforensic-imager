@@ -5,8 +5,7 @@ use rusqlite::{Connection, Row, params};
 
 use crate::migrations;
 use crate::{
-    AddEvidence, CaseRecord, CreateCase, EvidenceRecord, SourceSnapshot, StoreError,
-    StoreErrorCode,
+    AddEvidence, CaseRecord, CreateCase, EvidenceRecord, SourceSnapshot, StoreError, StoreErrorCode,
 };
 
 pub struct CaseStore {
@@ -122,20 +121,20 @@ fn map_evidence_row(row: &Row<'_>) -> rusqlite::Result<EvidenceRecord> {
     let case_id: String = row.get(1)?;
     let added_at: String = row.get(10)?;
     Ok(EvidenceRecord {
-        id: id
-            .parse::<EvidenceId>()
-            .map_err(|error| rusqlite::Error::FromSqlConversionFailure(
+        id: id.parse::<EvidenceId>().map_err(|error| {
+            rusqlite::Error::FromSqlConversionFailure(
                 0,
                 rusqlite::types::Type::Text,
                 Box::new(error),
-            ))?,
-        case_id: case_id
-            .parse::<CaseId>()
-            .map_err(|error| rusqlite::Error::FromSqlConversionFailure(
+            )
+        })?,
+        case_id: case_id.parse::<CaseId>().map_err(|error| {
+            rusqlite::Error::FromSqlConversionFailure(
                 1,
                 rusqlite::types::Type::Text,
                 Box::new(error),
-            ))?,
+            )
+        })?,
         description: row.get(2)?,
         source_path: row.get(3)?,
         source: SourceSnapshot {
@@ -146,13 +145,13 @@ fn map_evidence_row(row: &Row<'_>) -> rusqlite::Result<EvidenceRecord> {
             ctime_nanoseconds: row.get(8)?,
             read_only: row.get(9)?,
         },
-        added_at: added_at
-            .parse::<UtcTimestamp>()
-            .map_err(|error| rusqlite::Error::FromSqlConversionFailure(
+        added_at: added_at.parse::<UtcTimestamp>().map_err(|error| {
+            rusqlite::Error::FromSqlConversionFailure(
                 10,
                 rusqlite::types::Type::Text,
                 Box::new(error),
-            ))?,
+            )
+        })?,
     })
 }
 
@@ -165,10 +164,12 @@ fn map_insert_error(error: rusqlite::Error, duplicate_code: StoreErrorCode) -> S
 }
 
 fn map_evidence_insert_error(error: rusqlite::Error) -> StoreError {
-    if let rusqlite::Error::SqliteFailure(sqlite_error, _) = &error {
-        if sqlite_error.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_FOREIGNKEY {
-            return StoreError::new(StoreErrorCode::CaseNotFound, error.to_string());
-        }
+    if matches!(
+        &error,
+        rusqlite::Error::SqliteFailure(sqlite_error, _)
+            if sqlite_error.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_FOREIGNKEY
+    ) {
+        return StoreError::new(StoreErrorCode::CaseNotFound, error.to_string());
     }
     map_insert_error(error, StoreErrorCode::DuplicateEvidence)
 }
@@ -209,4 +210,3 @@ fn i64_to_u64(value: i64, column: usize) -> rusqlite::Result<u64> {
         )
     })
 }
-

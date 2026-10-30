@@ -1,0 +1,20 @@
+[package]
+name = "phase1-integration"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+
+[dev-dependencies]
+audit-log = { path = "../../crates/audit-log" }
+evidence-manager = { path = "../../crates/evidence-manager" }
+forensic-core = { path = "../../crates/forensic-core" }
+forensic-fixtures = { path = "../fixtures" }
+hashing = { path = "../../crates/hashing" }
+image-reader = { path = "../../crates/image-reader" }
+native-bindings = { path = "../../crates/native-bindings" }
+tempfile.workspace = true
+uuid.workspace = true
+

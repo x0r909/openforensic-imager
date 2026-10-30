@@ -35,4 +35,3 @@ proptest! {
         prop_assert_eq!(chunked(&input, &sorted_splits), one_shot(&input));
     }
 }
-

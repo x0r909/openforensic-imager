@@ -66,6 +66,13 @@ pub extern "C" fn ofi_abi_version() -> u32 {
 }
 
 #[unsafe(no_mangle)]
+/// Creates a case from a UTF-8 JSON request.
+///
+/// # Safety
+///
+/// `request` must point to `request_len` readable bytes. The response and error
+/// outputs must point to writable pointer slots. The caller owns any returned
+/// response or error and must release it with the matching free function.
 pub unsafe extern "C" fn ofi_case_create(
     request: *const u8,
     request_len: usize,
@@ -86,6 +93,13 @@ pub unsafe extern "C" fn ofi_case_create(
 }
 
 #[unsafe(no_mangle)]
+/// Adds evidence from a UTF-8 JSON request.
+///
+/// # Safety
+///
+/// `request` must point to `request_len` readable bytes. The response and error
+/// outputs must point to writable pointer slots. The caller owns any returned
+/// response or error and must release it with the matching free function.
 pub unsafe extern "C" fn ofi_evidence_add(
     request: *const u8,
     request_len: usize,
@@ -106,6 +120,13 @@ pub unsafe extern "C" fn ofi_evidence_add(
 }
 
 #[unsafe(no_mangle)]
+/// Frees a response buffer returned by this ABI.
+///
+/// # Safety
+///
+/// `bytes` must be null or a pointer previously returned by this library, and
+/// `len` must be its matching returned length. The pointer must not be used
+/// after this call.
 pub unsafe extern "C" fn ofi_bytes_free(bytes: *mut u8, len: usize) {
     if bytes.is_null() {
         return;
@@ -116,6 +137,12 @@ pub unsafe extern "C" fn ofi_bytes_free(bytes: *mut u8, len: usize) {
 }
 
 #[unsafe(no_mangle)]
+/// Frees an error returned by this ABI.
+///
+/// # Safety
+///
+/// `error` must be null or a pointer previously returned by this library and
+/// must not be freed again.
 pub unsafe extern "C" fn ofi_error_free(error: *mut ofi_error) {
     if !error.is_null() {
         unsafe {
@@ -125,6 +152,11 @@ pub unsafe extern "C" fn ofi_error_free(error: *mut ofi_error) {
 }
 
 #[unsafe(no_mangle)]
+/// Returns the stable error code string.
+///
+/// # Safety
+///
+/// `error` must be null or remain valid and unfreed for the returned lifetime.
 pub unsafe extern "C" fn ofi_error_code(error: *const ofi_error) -> *const c_char {
     if error.is_null() {
         return ptr::null();
@@ -133,6 +165,11 @@ pub unsafe extern "C" fn ofi_error_code(error: *const ofi_error) -> *const c_cha
 }
 
 #[unsafe(no_mangle)]
+/// Returns the human-readable error message.
+///
+/// # Safety
+///
+/// `error` must be null or remain valid and unfreed for the returned lifetime.
 pub unsafe extern "C" fn ofi_error_message(error: *const ofi_error) -> *const c_char {
     if error.is_null() {
         return ptr::null();
@@ -204,10 +241,7 @@ unsafe fn run_adapter(
     }
 }
 
-unsafe fn request_bytes<'a>(
-    request: *const u8,
-    request_len: usize,
-) -> Result<&'a [u8], FfiError> {
+unsafe fn request_bytes<'a>(request: *const u8, request_len: usize) -> Result<&'a [u8], FfiError> {
     if request.is_null() || request_len == 0 || request_len > MAX_REQUEST_BYTES {
         return Err(FfiError {
             status: ofi_status::OFI_STATUS_INVALID_ARGUMENT,
@@ -316,7 +350,6 @@ fn safe_c_string(value: &str) -> CString {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::ffi::CStr;
 
     #[test]
     fn panic_is_contained_and_reported() {
@@ -349,9 +382,7 @@ mod tests {
     fn error_accessors_are_null_safe() {
         assert!(unsafe { ofi_error_code(ptr::null()) }.is_null());
         assert!(unsafe { ofi_error_message(ptr::null()) }.is_null());
-        let text = CStr::from_bytes_with_nul(b"invalid_argument\0").unwrap();
+        let text = c"invalid_argument";
         assert_eq!(text.to_str().unwrap(), "invalid_argument");
     }
 }
-
-

@@ -3,8 +3,7 @@ use rusqlite::{Connection, Result};
 const SCHEMA_VERSION: i64 = 1;
 
 pub(crate) fn apply(connection: &mut Connection) -> Result<()> {
-    let version: i64 =
-        connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
+    let version: i64 = connection.query_row("PRAGMA user_version", [], |row| row.get(0))?;
     if version > SCHEMA_VERSION {
         return Err(rusqlite::Error::InvalidQuery);
     }
@@ -42,4 +41,3 @@ pub(crate) fn apply(connection: &mut Connection) -> Result<()> {
     transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     transaction.commit()
 }
-

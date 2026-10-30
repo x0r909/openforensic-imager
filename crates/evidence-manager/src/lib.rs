@@ -91,5 +91,3 @@ impl fmt::Display for StoreError {
 }
 
 impl std::error::Error for StoreError {}
-
-

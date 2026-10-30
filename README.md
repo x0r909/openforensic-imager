@@ -4,8 +4,19 @@ Linux-native digital forensics acquisition and evidence analysis platform.
 
 ## Current status
 
-Phase 0 feasibility assessment is complete. No application code has been
-implemented. Phase 1 is gated on review of:
+Phase 0 is complete. Phase 1 core is implemented and verified on the local
+workspace:
+
+- Rust workspace and domain primitives.
+- Streaming MD5, SHA-1, SHA-256, and SHA-512 hashing.
+- Read-only RAW image access with range and concurrent-change checks.
+- SQLite case and evidence metadata with UTC timestamps.
+- Append-only, hash-chained audit log with exclusive writer locking.
+- Minimal versioned C ABI for case and evidence requests.
+- Deterministic RAW fixture generator.
+- Phase 1 end-to-end integration test.
+
+Phase 2 has not started. Its live acquisition work remains gated on:
 
 - [ARCHITECTURE.md](ARCHITECTURE.md)
 - [REQUIREMENTS.md](REQUIREMENTS.md)
@@ -13,8 +24,10 @@ implemented. Phase 1 is gated on review of:
 - [SECURITY_MODEL.md](SECURITY_MODEL.md)
 - [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)
 
-The detailed findings are in [FEASIBILITY_REPORT.md](FEASIBILITY_REPORT.md)
-and [docs/reverse-engineering/](docs/reverse-engineering/).
+The verified Phase 1 result is documented in
+[docs/testing/phase1-results.md](docs/testing/phase1-results.md). The detailed
+feasibility findings are in [FEASIBILITY_REPORT.md](FEASIBILITY_REPORT.md) and
+[docs/reverse-engineering/](docs/reverse-engineering/).
 
 This project is independent. It does not copy FTK Imager source, assets, or
 protected implementation details, and it does not claim FTK Imager
@@ -76,12 +89,11 @@ investigation input only. It must not be committed or redistributed.
 - A separate analysis worker process so malformed evidence cannot crash the UI
   or corrupt the case database.
 
-## First implementation gate
+## Implementation gate
 
-Phase 1 will not begin until a reviewer confirms that the architecture and test
-strategy capture the intended scope. The first code change after approval will
-create the monorepo, failing tests, core domain types, streaming hashing, a RAW
-reader, and evidence metadata persistence.
+Phase 1 is complete at the core-library level. The next code phase is acquisition
+and verification. It requires the pinned libewf decision and test-host EWF tools
+described in [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md).
 
 ## Documentation map
 
@@ -95,6 +107,8 @@ reader, and evidence metadata persistence.
   requirements.
 - [TEST_STRATEGY.md](TEST_STRATEGY.md): fixtures, differential testing, fuzzing,
   GUI tests, and acceptance gates.
+- [docs/testing/phase1-results.md](docs/testing/phase1-results.md): exact Phase
+  1 verification commands, results, and limitations.
 - [SECURITY_MODEL.md](SECURITY_MODEL.md): threat model and mandatory controls.
 - [docs/reverse-engineering/](docs/reverse-engineering/): FTK Imager evidence,
   limitations, and compatibility status.

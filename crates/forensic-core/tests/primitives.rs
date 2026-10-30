@@ -51,4 +51,3 @@ fn internal_errors_are_retryable() {
     assert_eq!(error.code(), ErrorCode::Internal);
     assert!(error.retryable());
 }
-
