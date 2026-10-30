@@ -41,7 +41,7 @@ and verified on the local workspace:
   filesystem listing, verification, acquisition, bounded preview, signature
   identification, single-file extraction, and directory extraction reports.
 - Qt 6 desktop shell with QML evidence tree, file list, properties, viewer,
-  task panel, and working light/dark themes.
+  task panel, case/acquisition panel, and working light/dark themes.
 
 Architecture and review gates:
 

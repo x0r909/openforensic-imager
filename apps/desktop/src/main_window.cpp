@@ -54,6 +54,45 @@ MainWindow::MainWindow(AppController *controller, QWidget *parent)
             m_controller->openImage(path);
         }
     });
+    connect(m_controller, &AppController::acquisitionSourceRequested, this, [this]() {
+        const QString path = QFileDialog::getOpenFileName(
+            this, QStringLiteral("Acquisition Source"), QString(),
+            QStringLiteral("Disk images and devices (*.raw *.dd *.E01 *.e01);;All files (*)"));
+        if (!path.isEmpty()) {
+            m_controller->startAcquisition(path);
+        }
+    });
+    connect(m_controller, &AppController::verificationImageRequested, this, [this]() {
+        const QString path = QFileDialog::getOpenFileName(
+            this, QStringLiteral("Verify Image"), QString(),
+            QStringLiteral("Forensic images (*.raw *.dd *.E01 *.e01);;All files (*)"));
+        if (!path.isEmpty()) {
+            m_controller->setVerificationPath(path);
+            m_controller->startVerification(path);
+        }
+    });
+    connect(m_controller, &AppController::acquisitionDestinationRequested, this, [this]() {
+        const QString path =
+            QFileDialog::getExistingDirectory(this, QStringLiteral("Acquisition Destination"));
+        if (!path.isEmpty()) {
+            m_controller->setAcquisitionDestination(path);
+        }
+    });
+    connect(m_controller, &AppController::reportsDirectoryRequested, this, [this]() {
+        const QString path =
+            QFileDialog::getExistingDirectory(this, QStringLiteral("Reports Directory"));
+        if (!path.isEmpty()) {
+            m_controller->setReportsDirectory(path);
+        }
+    });
+    connect(m_controller, &AppController::caseDatabaseRequested, this, [this]() {
+        const QString path = QFileDialog::getSaveFileName(
+            this, QStringLiteral("Case Database"), QString(),
+            QStringLiteral("SQLite database (*.db)"));
+        if (!path.isEmpty()) {
+            m_controller->setCaseDatabasePath(path);
+        }
+    });
     applyTheme();
 }
 
@@ -70,6 +109,38 @@ void MainWindow::buildMenus() {
     QAction *clearTasks = fileMenu->addAction(QStringLiteral("Clear Completed &Tasks"));
     connect(clearTasks, &QAction::triggered, m_controller,
             &AppController::clearCompletedTasks);
+
+    QMenu *acquisitionMenu = menuBar()->addMenu(QStringLiteral("&Acquisition"));
+    QAction *acquire =
+        acquisitionMenu->addAction(QStringLiteral("Create Disk &Image…"));
+    acquire->setShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+A")));
+    connect(acquire, &QAction::triggered, m_controller,
+            &AppController::requestAcquisitionSource);
+    QAction *verify = acquisitionMenu->addAction(QStringLiteral("&Verify Image…"));
+    verify->setShortcut(QKeySequence(QStringLiteral("Ctrl+Shift+V")));
+    connect(verify, &QAction::triggered, m_controller,
+            &AppController::requestVerificationImage);
+
+    QMenu *caseMenu = menuBar()->addMenu(QStringLiteral("&Case"));
+    QAction *casePanel =
+        caseMenu->addAction(QStringLiteral("Case and &Acquisition…"));
+    connect(casePanel, &QAction::triggered, m_controller,
+            &AppController::requestCasePanel);
+    caseMenu->addSeparator();
+    QAction *createCase = caseMenu->addAction(QStringLiteral("&Create Case"));
+    connect(createCase, &QAction::triggered, m_controller, &AppController::createCase);
+    QAction *addEvidence =
+        caseMenu->addAction(QStringLiteral("Add Selected Evidence to &Case"));
+    connect(addEvidence, &QAction::triggered, m_controller,
+            &AppController::addEvidenceToCase);
+    QAction *chooseDatabase =
+        caseMenu->addAction(QStringLiteral("Choose Case &Database…"));
+    connect(chooseDatabase, &QAction::triggered, m_controller,
+            &AppController::requestCaseDatabase);
+    QAction *chooseReports =
+        caseMenu->addAction(QStringLiteral("Choose &Reports Directory…"));
+    connect(chooseReports, &QAction::triggered, m_controller,
+            &AppController::requestReportsDirectory);
 
     fileMenu->addSeparator();
     QAction *quit = fileMenu->addAction(QStringLiteral("&Quit"));
@@ -95,6 +166,9 @@ void MainWindow::buildMenus() {
     toolbar->setMovable(false);
     toolbar->setToolButtonStyle(Qt::ToolButtonTextOnly);
     toolbar->addAction(addImage);
+    toolbar->addSeparator();
+    toolbar->addAction(acquire);
+    toolbar->addAction(verify);
     toolbar->addSeparator();
     toolbar->addAction(toggleTheme);
 }

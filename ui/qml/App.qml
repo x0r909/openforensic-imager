@@ -15,6 +15,26 @@ Rectangle {
     property var taskModel
     property var viewerModel
 
+    Dialog {
+        id: caseDialog
+        title: "Case and Acquisition"
+        modal: true
+        standardButtons: Dialog.Close
+        width: Math.min(window.width - 80, 760)
+        height: Math.min(window.height - 80, 520)
+        anchors.centerIn: Overlay.overlay
+        background: Rectangle {
+            color: theme.surface
+            border.color: theme.border
+            border.width: 1
+            radius: theme.radius
+        }
+        contentItem: CasePanel {
+            theme: theme
+            controller: window.app
+        }
+    }
+
     Theme {
         id: theme
         dark: window.app ? window.app.dark : false
@@ -28,6 +48,9 @@ Rectangle {
             errorBanner.text = message;
             errorBanner.visible = true;
             errorTimer.restart();
+        }
+        function onCasePanelRequested() {
+            caseDialog.open();
         }
     }
 

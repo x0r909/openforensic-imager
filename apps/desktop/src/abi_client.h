@@ -20,6 +20,7 @@ public:
     QJsonObject snapshot(const QString &jobId, QString *error);
     bool cancel(const QString &jobId);
     QJsonObject createCase(const QJsonObject &request, QString *error);
+    QJsonObject addEvidence(const QJsonObject &request, QString *error);
 
 private:
     ofi_job_manager *m_manager = nullptr;

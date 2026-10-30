@@ -55,6 +55,7 @@ qt_add_resources(openforensic-imager "qml"
     BASE "${CMAKE_CURRENT_SOURCE_DIR}/../../ui/qml"
     FILES
         ../../ui/qml/App.qml
+        ../../ui/qml/CasePanel.qml
         ../../ui/qml/EmptyState.qml
         ../../ui/qml/EvidenceTree.qml
         ../../ui/qml/FileList.qml

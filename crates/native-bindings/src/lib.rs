@@ -10,7 +10,7 @@ use acquisition::{
     AcquisitionOptions, AcquisitionRequest, AcquisitionStatus, OutputFormat,
     acquire_path_with_cancel, verify_image,
 };
-use evidence_manager::{AddEvidence, CaseStore, CreateCase, SourceSnapshot};
+use evidence_manager::{AddEvidence, CaseStore, CreateCase, EvidenceRecord, SourceSnapshot};
 use extraction::{ExtractionOptions, Extractor};
 use filesystem::{EvidenceFile, FileSystem};
 use forensic_core::{CaseId, EvidenceId, JobId};
@@ -18,7 +18,9 @@ use hashing::HashAlgorithm;
 use image_reader::open_image;
 use job_manager::{JobError, JobManager, JobOutcome};
 use partition_analyzer::analyze_partitions;
-use reporting::write_extraction_report_set;
+use reporting::{
+    write_acquisition_report_set, write_extraction_report_set, write_verification_report_set,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use viewer::{ByteSource, SourceError, hex_page, identify_signature, preview_text};
@@ -84,6 +86,8 @@ enum JobRequest {
         path: String,
         algorithms: Vec<HashAlgorithm>,
         expected: BTreeMap<HashAlgorithm, String>,
+        reports_dir: Option<String>,
+        report_base_name: Option<String>,
     },
     Acquisition {
         source_path: String,
@@ -91,6 +95,15 @@ enum JobRequest {
         base_name: String,
         format: OutputFormat,
         options: AcquisitionOptions,
+        reports_dir: Option<String>,
+        report_base_name: Option<String>,
+    },
+    SourceSnapshot {
+        path: String,
+    },
+    EvidenceList {
+        db_path: String,
+        case_id: CaseId,
     },
     HexPreview {
         path: String,
@@ -638,10 +651,28 @@ fn handle_job_submit(manager: &JobManager, request: &[u8]) -> Result<Vec<u8>, Ff
             path,
             algorithms,
             expected,
+            reports_dir,
+            report_base_name,
         } => manager.submit("verification", move |_| {
             let report = verify_image(Path::new(&path), &algorithms, &expected)
                 .map_err(|error| JobError::failed("verification.failed", error.to_string()))?;
-            job_success(report)
+            let report_paths = match reports_dir {
+                Some(directory) => Some(
+                    write_verification_report_set(
+                        Path::new(&directory),
+                        report_base_name.as_deref().unwrap_or("verification"),
+                        &report,
+                    )
+                    .map_err(|error| {
+                        JobError::failed("verification.report", error.message().to_owned())
+                    })?,
+                ),
+                None => None,
+            };
+            job_success(json!({
+                "report": report,
+                "reports": report_paths,
+            }))
         }),
         JobRequest::Acquisition {
             source_path,
@@ -649,7 +680,12 @@ fn handle_job_submit(manager: &JobManager, request: &[u8]) -> Result<Vec<u8>, Ff
             base_name,
             format,
             options,
+            reports_dir,
+            report_base_name,
         } => manager.submit("acquisition", move |context| {
+            let report_name = report_base_name
+                .clone()
+                .unwrap_or_else(|| base_name.clone());
             let result = acquire_path_with_cancel(
                 AcquisitionRequest {
                     source_path: source_path.into(),
@@ -662,11 +698,27 @@ fn handle_job_submit(manager: &JobManager, request: &[u8]) -> Result<Vec<u8>, Ff
             )
             .map_err(|error| JobError::failed("acquisition.failed", error.to_string()))?;
             match result.status {
-                AcquisitionStatus::Succeeded => job_success(json!({
-                    "status": result.status,
-                    "manifest": result.manifest,
-                    "manifest_path": result.manifest_path,
-                })),
+                AcquisitionStatus::Succeeded => {
+                    let report_paths = match reports_dir {
+                        Some(directory) => Some(
+                            write_acquisition_report_set(
+                                Path::new(&directory),
+                                &report_name,
+                                &result.manifest,
+                            )
+                            .map_err(|error| {
+                                JobError::failed("acquisition.report", error.message().to_owned())
+                            })?,
+                        ),
+                        None => None,
+                    };
+                    job_success(json!({
+                        "status": result.status,
+                        "manifest": result.manifest,
+                        "manifest_path": result.manifest_path,
+                        "reports": report_paths,
+                    }))
+                }
                 AcquisitionStatus::Partial => {
                     let value = job_value(json!({
                         "status": result.status,
@@ -685,6 +737,27 @@ fn handle_job_submit(manager: &JobManager, request: &[u8]) -> Result<Vec<u8>, Ff
                 AcquisitionStatus::Cancelled => Err(JobError::cancelled("acquisition cancelled")),
             }
         }),
+        JobRequest::SourceSnapshot { path } => manager.submit("source_snapshot", move |_| {
+            let image = open_image(Path::new(&path))
+                .map_err(|error| JobError::failed("source.open", error.to_string()))?;
+            let metadata = image.metadata();
+            job_success(json!({
+                "format": metadata.format,
+                "logical_length": metadata.logical_length,
+                "sector_size": metadata.sector_size,
+                "source": metadata.source,
+            }))
+        }),
+        JobRequest::EvidenceList { db_path, case_id } => {
+            manager.submit("evidence_list", move |_| {
+                let store = CaseStore::open(Path::new(&db_path))
+                    .map_err(|error| JobError::failed("evidence.store", error.to_string()))?;
+                let evidence: Vec<EvidenceRecord> = store
+                    .list_evidence(case_id)
+                    .map_err(|error| JobError::failed("evidence.list", error.to_string()))?;
+                job_success(evidence)
+            })
+        }
         JobRequest::HexPreview {
             path,
             offset_bytes,

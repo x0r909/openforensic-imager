@@ -22,6 +22,216 @@ void AppController::setDark(bool dark) {
     emit darkChanged();
 }
 
+void AppController::setCaseDatabasePath(const QString &path) {
+    if (m_caseDatabasePath == path) {
+        return;
+    }
+    m_caseDatabasePath = path;
+    emit caseDatabasePathChanged();
+}
+
+void AppController::setCaseId(const QString &id) {
+    if (m_caseId == id) {
+        return;
+    }
+    m_caseId = id;
+    emit caseIdChanged();
+}
+
+void AppController::setEvidenceDescription(const QString &description) {
+    if (m_evidenceDescription == description) {
+        return;
+    }
+    m_evidenceDescription = description;
+    emit evidenceDescriptionChanged();
+}
+
+void AppController::setAcquisitionDestination(const QString &path) {
+    if (m_acquisitionDestination == path) {
+        return;
+    }
+    m_acquisitionDestination = path;
+    emit acquisitionDestinationChanged();
+}
+
+void AppController::setAcquisitionBaseName(const QString &name) {
+    if (m_acquisitionBaseName == name) {
+        return;
+    }
+    m_acquisitionBaseName = name;
+    emit acquisitionBaseNameChanged();
+}
+
+void AppController::setAcquisitionFormat(const QString &format) {
+    if (m_acquisitionFormat == format) {
+        return;
+    }
+    m_acquisitionFormat = format;
+    emit acquisitionFormatChanged();
+}
+
+void AppController::setVerificationExpectedSha256(const QString &hash) {
+    if (m_verificationExpectedSha256 == hash) {
+        return;
+    }
+    m_verificationExpectedSha256 = hash;
+    emit verificationExpectedSha256Changed();
+}
+
+void AppController::setVerificationPath(const QString &path) {
+    if (m_verificationPath == path) {
+        return;
+    }
+    m_verificationPath = path;
+    emit verificationPathChanged();
+}
+
+void AppController::setReportsDirectory(const QString &path) {
+    if (m_reportsDirectory == path) {
+        return;
+    }
+    m_reportsDirectory = path;
+    emit reportsDirectoryChanged();
+}
+
+void AppController::requestAcquisitionSource() {
+    emit acquisitionSourceRequested();
+}
+
+void AppController::requestVerificationImage() {
+    emit verificationImageRequested();
+}
+
+void AppController::requestAcquisitionDestination() {
+    emit acquisitionDestinationRequested();
+}
+
+void AppController::requestReportsDirectory() {
+    emit reportsDirectoryRequested();
+}
+
+void AppController::requestCaseDatabase() {
+    emit caseDatabaseRequested();
+}
+
+void AppController::requestCasePanel() {
+    emit casePanelRequested();
+}
+
+void AppController::createCase() {
+    if (m_caseDatabasePath.isEmpty() || m_caseId.isEmpty()) {
+        emit errorRaised(QStringLiteral(
+            "Choose a case database and enter a case UUID before creating a case."));
+        return;
+    }
+    const QString caseId = m_caseId;
+    QString error;
+    const QJsonObject response = m_abi.createCase(
+        {{QStringLiteral("db_path"), m_caseDatabasePath},
+         {QStringLiteral("id"), caseId},
+         {QStringLiteral("title"), m_evidenceDescription.isEmpty()
+                                       ? QStringLiteral("Forensic case")
+                                       : m_evidenceDescription},
+         {QStringLiteral("examiner"), QStringLiteral("Examiner")}},
+        &error);
+    if (response.isEmpty()) {
+        emit errorRaised(error);
+        return;
+    }
+    setStatus(QStringLiteral("Case created"));
+}
+
+void AppController::addEvidenceToCase() {
+    if (m_caseDatabasePath.isEmpty() || m_caseId.isEmpty()
+        || m_selectedImagePath.isEmpty()) {
+        emit errorRaised(QStringLiteral(
+            "Open an image and provide a case database plus case UUID first."));
+        return;
+    }
+    QString error;
+    const QString jobId = m_abi.submit(
+        {{QStringLiteral("operation"), QStringLiteral("source_snapshot")},
+         {QStringLiteral("path"), m_selectedImagePath}},
+        &error);
+    if (jobId.isEmpty()) {
+        emit errorRaised(error);
+        return;
+    }
+    trackJob(jobId,
+             {QStringLiteral("Capture source identity"),
+              QStringLiteral("source_snapshot_for_case"), m_selectedImageId,
+              m_selectedImagePath, 0, 0, {}});
+}
+
+void AppController::startAcquisition(const QString &sourcePath) {
+    if (sourcePath.isEmpty() || m_acquisitionDestination.isEmpty()) {
+        emit errorRaised(QStringLiteral(
+            "Choose a source and destination directory before acquisition."));
+        return;
+    }
+    QString error;
+    QJsonObject request{
+        {QStringLiteral("operation"), QStringLiteral("acquisition")},
+        {QStringLiteral("source_path"), sourcePath},
+        {QStringLiteral("destination_dir"), m_acquisitionDestination},
+        {QStringLiteral("base_name"), m_acquisitionBaseName},
+        {QStringLiteral("format"), m_acquisitionFormat},
+        {QStringLiteral("options"),
+         QJsonObject{{QStringLiteral("block_size"), 1024 * 1024},
+                     {QStringLiteral("maximum_segment_size"), 1024 * 1024 * 1024},
+                     {QStringLiteral("compression"),
+                      m_acquisitionFormat == QStringLiteral("ewf1_e01")
+                          ? QStringLiteral("fast") : QStringLiteral("none")},
+                     {QStringLiteral("verify_after"), true}}},
+    };
+    if (!m_reportsDirectory.isEmpty()) {
+        request.insert(QStringLiteral("reports_dir"), m_reportsDirectory);
+        request.insert(QStringLiteral("report_base_name"), m_acquisitionBaseName);
+    }
+    const QString jobId = m_abi.submit(request, &error);
+    if (jobId.isEmpty()) {
+        emit errorRaised(error);
+        return;
+    }
+    trackJob(jobId,
+             {QStringLiteral("Acquire image"), QStringLiteral("acquisition"),
+              m_selectedImageId, sourcePath, 0, 0, {}});
+    setStatus(QStringLiteral("Acquisition running"));
+}
+
+void AppController::startVerification(const QString &imagePath) {
+    if (imagePath.isEmpty()) {
+        emit errorRaised(QStringLiteral("Choose an image to verify."));
+        return;
+    }
+    QJsonObject expected;
+    if (!m_verificationExpectedSha256.isEmpty()) {
+        expected.insert(QStringLiteral("sha256"), m_verificationExpectedSha256);
+    }
+    QString error;
+    QJsonObject request{
+        {QStringLiteral("operation"), QStringLiteral("verification")},
+        {QStringLiteral("path"), imagePath},
+        {QStringLiteral("algorithms"),
+         QJsonArray{QStringLiteral("sha256"), QStringLiteral("sha1")}},
+        {QStringLiteral("expected"), expected},
+    };
+    if (!m_reportsDirectory.isEmpty()) {
+        request.insert(QStringLiteral("reports_dir"), m_reportsDirectory);
+        request.insert(QStringLiteral("report_base_name"),
+                       QStringLiteral("verification"));
+    }
+    const QString jobId = m_abi.submit(request, &error);
+    if (jobId.isEmpty()) {
+        emit errorRaised(error);
+        return;
+    }
+    trackJob(jobId,
+             {QStringLiteral("Verify image"), QStringLiteral("verification"), {}, imagePath,
+              0, 0, {}});
+    setStatus(QStringLiteral("Verification running"));
+}
+
 bool AppController::canNavigateUp() const {
     return m_currentDirectoryInode != 0 && !m_directoryStack.isEmpty();
 }
@@ -274,6 +484,57 @@ void AppController::handleJobUpdate(const QString &jobId, const QJsonObject &sna
         m_viewer.setText(result);
     } else if (pending.operation == QStringLiteral("file_signature")) {
         m_viewer.setSignature(result);
+    } else if (pending.operation == QStringLiteral("acquisition")) {
+        const QJsonObject manifest = result.value(QStringLiteral("manifest")).toObject();
+        const QString status = manifest.value(QStringLiteral("status")).toString();
+        setStatus(status == QStringLiteral("succeeded")
+                      ? QStringLiteral("Acquisition succeeded and was verified")
+                      : QStringLiteral("Acquisition is %1").arg(status));
+        const QJsonArray artifacts = manifest.value(QStringLiteral("artifacts")).toArray();
+        if (!artifacts.isEmpty()) {
+            const QString path = QFileInfo(pending.imagePath).absolutePath()
+                + QLatin1Char('/')
+                + artifacts.first().toObject().value(QStringLiteral("path")).toString();
+            setVerificationPath(path);
+        }
+    } else if (pending.operation == QStringLiteral("verification")) {
+        const QJsonObject report = result.value(QStringLiteral("report")).toObject();
+        const QJsonObject outcomes = report.value(QStringLiteral("outcomes")).toObject();
+        QStringList parts;
+        for (auto it = outcomes.begin(); it != outcomes.end(); ++it) {
+            parts.append(it.key().toUpper() + QStringLiteral(": ")
+                         + it.value().toString());
+        }
+        m_properties.clear();
+        m_properties.append(QStringLiteral("Verification"), QStringLiteral("Image"),
+                            report.value(QStringLiteral("path")).toString(), {}, true);
+        for (const QString &part : parts) {
+            const int split = part.indexOf(QStringLiteral(": "));
+            m_properties.append(QStringLiteral("Verification"), part.left(split),
+                                part.mid(split + 2));
+        }
+        const bool mismatch = outcomes.value(QStringLiteral("sha256")).toString()
+            == QStringLiteral("mismatch");
+        setStatus(mismatch ? QStringLiteral("Verification mismatch")
+                           : QStringLiteral("Verification completed"));
+    } else if (pending.operation == QStringLiteral("source_snapshot_for_case")) {
+        const QJsonObject snapshot = result.value(QStringLiteral("source")).toObject();
+        QString error;
+        const QJsonObject response = m_abi.addEvidence(
+            {{QStringLiteral("db_path"), m_caseDatabasePath},
+             {QStringLiteral("id"), QUuid::createUuid().toString(QUuid::WithoutBraces)},
+             {QStringLiteral("case_id"), m_caseId},
+             {QStringLiteral("description"),
+              m_evidenceDescription.isEmpty() ? QStringLiteral("Evidence")
+                                              : m_evidenceDescription},
+             {QStringLiteral("source_path"), pending.imagePath},
+             {QStringLiteral("source"), snapshot}},
+            &error);
+        if (response.isEmpty()) {
+            emit errorRaised(error);
+        } else {
+            setStatus(QStringLiteral("Evidence added to case"));
+        }
     }
 }
 

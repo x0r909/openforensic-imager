@@ -566,3 +566,160 @@ fn directory_extraction_job_writes_reports() {
     );
     unsafe { ofi_job_manager_free(manager) };
 }
+
+#[test]
+fn acquisition_job_writes_reports_and_verification_job_verifies_output() {
+    let directory = tempdir().unwrap();
+    let source = directory.path().join("source.raw");
+    std::fs::write(&source, vec![0x41_u8; 8192]).unwrap();
+    let destination = directory.path().join("acquired");
+    std::fs::create_dir(&destination).unwrap();
+    let reports = directory.path().join("reports");
+    std::fs::create_dir(&reports).unwrap();
+    let mut manager: *mut ofi_job_manager = ptr::null_mut();
+    let mut error = ptr::null_mut();
+    assert_eq!(
+        unsafe { ofi_job_manager_new(2, &mut manager, &mut error) },
+        ofi_status::OFI_STATUS_OK
+    );
+    let id = unsafe {
+        submit_request(
+            manager,
+            &serde_json::json!({
+                "operation": "acquisition",
+                "source_path": source,
+                "destination_dir": destination,
+                "base_name": "evidence",
+                "format": "raw",
+                "options": {
+                    "block_size": 4096,
+                    "maximum_segment_size": 1048576,
+                    "compression": "none",
+                    "verify_after": true
+                },
+                "reports_dir": reports,
+                "report_base_name": "phase5"
+            }),
+        )
+    };
+    let acquired = unsafe { wait_for_job(manager, &id) };
+    assert_eq!(acquired["body"]["status"], "succeeded");
+    assert!(reports.join("phase5.acquisition.json").exists());
+    assert!(reports.join("phase5.acquisition.csv").exists());
+    assert!(reports.join("phase5.acquisition.html").exists());
+    let image = destination.join("evidence.raw");
+    let expected = acquired["body"]["result"]["manifest"]["artifacts"][0]["sha256"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert_eq!(
+        acquired["body"]["result"]["manifest"]["hashes"][0]["scope"],
+        "output_logical"
+    );
+
+    let id = unsafe {
+        submit_request(
+            manager,
+            &serde_json::json!({
+                "operation": "verification",
+                "path": image,
+                "algorithms": ["sha256"],
+                "expected": {"sha256": expected},
+                "reports_dir": reports,
+                "report_base_name": "phase5"
+            }),
+        )
+    };
+    let verified = unsafe { wait_for_job(manager, &id) };
+    assert_eq!(verified["body"]["status"], "succeeded");
+    assert_eq!(
+        verified["body"]["result"]["report"]["outcomes"]["sha256"],
+        "match"
+    );
+    assert!(reports.join("phase5.verification.json").exists());
+    assert!(reports.join("phase5.verification.csv").exists());
+    assert!(reports.join("phase5.verification.html").exists());
+    unsafe { ofi_job_manager_free(manager) };
+}
+
+#[test]
+fn source_snapshot_and_evidence_list_jobs_work() {
+    let directory = tempdir().unwrap();
+    let image = directory.path().join("image.raw");
+    std::fs::write(&image, vec![0x42_u8; 4096]).unwrap();
+    let database = directory.path().join("case.db");
+    let case_id = "00000000-0000-0000-0000-000000000010";
+    let evidence_id = "00000000-0000-0000-0000-000000000011";
+    let request = format!(
+        r#"{{"db_path":"{}","id":"{case_id}","title":"UI Case","examiner":"Examiner"}}"#,
+        database.display()
+    );
+    let mut response = ptr::null_mut();
+    let mut response_len = 0;
+    let mut error = ptr::null_mut();
+    assert_eq!(
+        unsafe {
+            ofi_case_create(
+                request.as_ptr(),
+                request.len(),
+                &mut response,
+                &mut response_len,
+                &mut error,
+            )
+        },
+        ofi_status::OFI_STATUS_OK
+    );
+    unsafe { ofi_bytes_free(response, response_len) };
+    let mut manager: *mut ofi_job_manager = ptr::null_mut();
+    assert_eq!(
+        unsafe { ofi_job_manager_new(1, &mut manager, &mut error) },
+        ofi_status::OFI_STATUS_OK
+    );
+    let id = unsafe {
+        submit_request(
+            manager,
+            &serde_json::json!({"operation": "source_snapshot", "path": image}),
+        )
+    };
+    let snapshot = unsafe { wait_for_job(manager, &id) };
+    assert_eq!(snapshot["body"]["status"], "succeeded");
+    assert_eq!(snapshot["body"]["result"]["logical_length"], 4096);
+    assert_eq!(snapshot["body"]["result"]["source"]["read_only"], true);
+    let source = snapshot["body"]["result"]["source"].clone();
+    let request = format!(
+        r#"{{"db_path":"{}","id":"{evidence_id}","case_id":"{case_id}","description":"image","source_path":"{}","source":{}}}"#,
+        database.display(),
+        image.display(),
+        source
+    );
+    let mut response = ptr::null_mut();
+    let mut response_len = 0;
+    assert_eq!(
+        unsafe {
+            ofi_evidence_add(
+                request.as_ptr(),
+                request.len(),
+                &mut response,
+                &mut response_len,
+                &mut error,
+            )
+        },
+        ofi_status::OFI_STATUS_OK
+    );
+    unsafe { ofi_bytes_free(response, response_len) };
+
+    let id = unsafe {
+        submit_request(
+            manager,
+            &serde_json::json!({
+                "operation": "evidence_list",
+                "db_path": database,
+                "case_id": case_id
+            }),
+        )
+    };
+    let listed = unsafe { wait_for_job(manager, &id) };
+    assert_eq!(listed["body"]["status"], "succeeded");
+    assert_eq!(listed["body"]["result"][0]["id"], evidence_id);
+    unsafe { ofi_job_manager_free(manager) };
+}

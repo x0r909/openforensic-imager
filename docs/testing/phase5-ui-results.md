@@ -11,6 +11,13 @@ Date: 2026-10-30
   partitions, open filesystem at a partition offset, list root directory.
 - File list flow: select file, inspect metadata, load bounded hex/text preview
   and signature through background jobs.
+- Case panel: create a SQLite case, capture source identity, add evidence, and
+  choose a case database and reports directory.
+- Acquisition wizard path: choose source, destination, base name, and RAW or
+  EWF1 format; acquisition runs as a background job and writes reports.
+- Verification path: choose an image and optional expected SHA-256, run the
+  verification job, and inspect explicit match, mismatch, or unavailable
+  outcomes.
 - Task panel with live progress, cancel, and failure/partial/cancelled labels.
 - Light and dark theme tokens with verified WCAG AA text pairings.
 - Empty, loading, error, partial, and cancelled states designed for each data
@@ -46,8 +53,9 @@ Result: 4 CTest tests passed:
 `qmllint` exits 0 with no warnings. Both themes were rendered offscreen and
 inspected; screenshots are not committed.
 
-The Rust workspace remains at 39 executables and 118 passing tests after the
-ABI additions used by the shell.
+The Rust workspace now reports 40 executables and 121 passing tests after the
+report, acquisition, verification, source-snapshot, and evidence-list ABI
+additions.
 
 ## Delivery Gate
 
@@ -71,8 +79,8 @@ ABI additions used by the shell.
   and metadata only.
 - Directory paging is not yet exposed by the filesystem layer, so very large
   directories still materialize before display.
-- The evidence manager, acquisition wizard, verification report view, and
-  extraction report view are not yet wired into the desktop shell.
+- The case panel is functional, but case/evidence browsing, acquisition
+  history, and extraction report views are not yet full screens.
 - Accessibility was checked structurally (labels, focusable lists, keyboard
   shortcuts, contrast) but not with a screen reader or automated accessibility
   tree test.

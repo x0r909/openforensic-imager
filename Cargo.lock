@@ -475,6 +475,7 @@ dependencies = [
  "extraction",
  "filesystem",
  "forensic-core",
+ "forensic-fixtures",
  "hashing",
  "image-reader",
  "job-manager",

@@ -103,6 +103,201 @@ pub fn write_extraction_report_set(
     Ok(paths)
 }
 
+pub fn write_acquisition_report_set(
+    output_dir: &Path,
+    base_name: &str,
+    acquisition: &AcquisitionManifest,
+) -> Result<ReportPaths, ReportError> {
+    validate_output(output_dir, base_name)?;
+    let bundle = AcquisitionReportBundle {
+        schema_version: 1,
+        generated_at: UtcTimestamp::now(),
+        acquisition,
+    };
+    let json = serde_json::to_vec_pretty(&bundle)
+        .map_err(|error| ReportError::new(format!("JSON report failed: {error}")))?;
+    let csv = render_acquisition_csv(acquisition);
+    let html = render_acquisition_html(acquisition);
+    let paths = ReportPaths {
+        json: output_dir.join(format!("{base_name}.acquisition.json")),
+        csv: output_dir.join(format!("{base_name}.acquisition.csv")),
+        html: output_dir.join(format!("{base_name}.acquisition.html")),
+    };
+    write_owner_only(&paths.json, &json)?;
+    write_owner_only(&paths.csv, csv.as_bytes())?;
+    write_owner_only(&paths.html, html.as_bytes())?;
+    Ok(paths)
+}
+
+pub fn write_verification_report_set(
+    output_dir: &Path,
+    base_name: &str,
+    verification: &VerificationReport,
+) -> Result<ReportPaths, ReportError> {
+    validate_output(output_dir, base_name)?;
+    let bundle = VerificationReportBundle {
+        schema_version: 1,
+        generated_at: UtcTimestamp::now(),
+        verification,
+    };
+    let json = serde_json::to_vec_pretty(&bundle)
+        .map_err(|error| ReportError::new(format!("JSON report failed: {error}")))?;
+    let csv = render_verification_csv(verification);
+    let html = render_verification_html(verification);
+    let paths = ReportPaths {
+        json: output_dir.join(format!("{base_name}.verification.json")),
+        csv: output_dir.join(format!("{base_name}.verification.csv")),
+        html: output_dir.join(format!("{base_name}.verification.html")),
+    };
+    write_owner_only(&paths.json, &json)?;
+    write_owner_only(&paths.csv, csv.as_bytes())?;
+    write_owner_only(&paths.html, html.as_bytes())?;
+    Ok(paths)
+}
+
+#[derive(Serialize)]
+struct AcquisitionReportBundle<'a> {
+    schema_version: u32,
+    generated_at: UtcTimestamp,
+    acquisition: &'a AcquisitionManifest,
+}
+
+#[derive(Serialize)]
+struct VerificationReportBundle<'a> {
+    schema_version: u32,
+    generated_at: UtcTimestamp,
+    verification: &'a VerificationReport,
+}
+
+fn render_acquisition_csv(acquisition: &AcquisitionManifest) -> String {
+    let mut output = String::from("section,field,value\n");
+    csv_row(
+        &mut output,
+        "acquisition",
+        "job_id",
+        &acquisition.job_id.to_string(),
+    );
+    csv_row(
+        &mut output,
+        "acquisition",
+        "status",
+        &format!("{:?}", acquisition.status).to_lowercase(),
+    );
+    csv_row(
+        &mut output,
+        "acquisition",
+        "source",
+        &acquisition.source_path,
+    );
+    csv_row(
+        &mut output,
+        "acquisition",
+        "bytes_written",
+        &acquisition.bytes_written.to_string(),
+    );
+    for hash in &acquisition.hashes {
+        csv_row(
+            &mut output,
+            "hash",
+            &format!("{:?}.{:?}", hash.algorithm, hash.scope).to_lowercase(),
+            &hash.digest_hex,
+        );
+    }
+    for artifact in &acquisition.artifacts {
+        csv_row(&mut output, "artifact", &artifact.path, &artifact.sha256);
+    }
+    output
+}
+
+fn render_acquisition_html(acquisition: &AcquisitionManifest) -> String {
+    let mut output = String::new();
+    output.push_str("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">");
+    output.push_str("<title>OpenForensic Imager Acquisition Report</title></head><body>");
+    output.push_str("<h1>OpenForensic Imager Acquisition Report</h1><table>");
+    html_row(&mut output, "Job ID", &acquisition.job_id.to_string());
+    html_row(&mut output, "Status", &format!("{:?}", acquisition.status));
+    html_row(&mut output, "Source", &acquisition.source_path);
+    html_row(
+        &mut output,
+        "Bytes written",
+        &acquisition.bytes_written.to_string(),
+    );
+    output.push_str("</table><h2>Hashes</h2><table>");
+    for hash in &acquisition.hashes {
+        html_row(
+            &mut output,
+            &format!("{:?} {:?}", hash.algorithm, hash.scope),
+            &hash.digest_hex,
+        );
+    }
+    output.push_str("</table><h2>Artifacts</h2><table>");
+    for artifact in &acquisition.artifacts {
+        html_row(&mut output, &artifact.path, &artifact.sha256);
+    }
+    output.push_str("</table></body></html>");
+    output
+}
+
+fn render_verification_csv(verification: &VerificationReport) -> String {
+    let mut output = String::from("section,field,value\n");
+    csv_row(
+        &mut output,
+        "verification",
+        "path",
+        &verification.path.display().to_string(),
+    );
+    csv_row(
+        &mut output,
+        "verification",
+        "logical_length",
+        &verification.logical_length.to_string(),
+    );
+    for (algorithm, outcome) in &verification.outcomes {
+        csv_row(
+            &mut output,
+            "outcome",
+            &format!("{algorithm:?}").to_lowercase(),
+            &format!("{outcome:?}").to_lowercase(),
+        );
+    }
+    for (algorithm, digest) in &verification.computed {
+        csv_row(
+            &mut output,
+            "computed",
+            &format!("{algorithm:?}").to_lowercase(),
+            digest,
+        );
+    }
+    output
+}
+
+fn render_verification_html(verification: &VerificationReport) -> String {
+    let mut output = String::new();
+    output.push_str("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">");
+    output.push_str("<title>OpenForensic Imager Verification Report</title></head><body>");
+    output.push_str("<h1>OpenForensic Imager Verification Report</h1><table>");
+    html_row(
+        &mut output,
+        "Image",
+        &verification.path.display().to_string(),
+    );
+    html_row(
+        &mut output,
+        "Logical length",
+        &verification.logical_length.to_string(),
+    );
+    output.push_str("</table><h2>Outcomes</h2><table>");
+    for (algorithm, outcome) in &verification.outcomes {
+        html_row(
+            &mut output,
+            &format!("{algorithm:?}"),
+            &format!("{outcome:?}"),
+        );
+    }
+    output.push_str("</table></body></html>");
+    output
+}
+
 #[derive(Serialize)]
 struct ExtractionReportBundle<'a> {
     schema_version: u32,

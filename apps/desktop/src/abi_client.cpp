@@ -146,3 +146,23 @@ QJsonObject AbiClient::createCase(const QJsonObject &request, QString *error) {
     }
     return takeResponse(response, responseLength);
 }
+
+QJsonObject AbiClient::addEvidence(const QJsonObject &request, QString *error) {
+    const QByteArray bytes = QJsonDocument(request).toJson(QJsonDocument::Compact);
+    uint8_t *response = nullptr;
+    size_t responseLength = 0;
+    ofi_error *ffiError = nullptr;
+    const ofi_status status = ofi_evidence_add(
+        reinterpret_cast<const uint8_t *>(bytes.constData()),
+        static_cast<size_t>(bytes.size()),
+        &response,
+        &responseLength,
+        &ffiError);
+    if (status != OFI_STATUS_OK) {
+        if (error != nullptr) {
+            *error = takeError(ffiError);
+        }
+        return {};
+    }
+    return takeResponse(response, responseLength);
+}

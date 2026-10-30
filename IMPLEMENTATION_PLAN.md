@@ -360,8 +360,9 @@ The background job manager is implemented and documented in
 The Qt shell, QML workbench, models, themes, and offscreen GUI tests are
 implemented and documented in
 [`docs/testing/phase5-ui-results.md`](docs/testing/phase5-ui-results.md).
-Acquisition wizard, report views, evidence-manager screens, and full
-accessibility-tree testing remain open.
+The case/acquisition panel, acquisition wizard path, verification path, and
+report writing are implemented. Evidence browsing screens, extraction report
+views, and full accessibility-tree testing remain open.
 
 ## Phase 6 execution outline
 
