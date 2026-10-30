@@ -322,19 +322,24 @@ fn acquire_reader(
     };
 
     let manifest_dir = if status == AcquisitionStatus::Succeeded {
-        for path in staged_artifacts {
-            let final_path = request
-                .destination_dir
-                .join(path.file_name().unwrap_or_default());
-            if final_path.exists() {
-                return Err(AcquisitionError::new(
-                    AcquisitionErrorCode::InvalidRequest,
-                    format!(
-                        "destination artifact already exists: {}",
-                        final_path.display()
-                    ),
-                ));
-            }
+        let final_paths = staged_artifacts
+            .iter()
+            .map(|path| {
+                request
+                    .destination_dir
+                    .join(path.file_name().unwrap_or_default())
+            })
+            .collect::<Vec<_>>();
+        if let Some(existing) = final_paths.iter().find(|path| path.exists()) {
+            return Err(AcquisitionError::new(
+                AcquisitionErrorCode::InvalidRequest,
+                format!(
+                    "destination artifact already exists: {}",
+                    existing.display()
+                ),
+            ));
+        }
+        for (path, final_path) in staged_artifacts.into_iter().zip(final_paths) {
             std::fs::rename(&path, &final_path).map_err(|error| {
                 AcquisitionError::new(AcquisitionErrorCode::Io, error.to_string())
             })?;
