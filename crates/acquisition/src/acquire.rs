@@ -4,10 +4,8 @@ use std::fs::{File, OpenOptions};
 use std::io::Write;
 use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 
-use forensic_core::{ByteRange, JobId, UtcTimestamp};
+use forensic_core::{ByteRange, CancellationToken, JobId, UtcTimestamp};
 use hashing::{HashAlgorithm, HashDigest, HashScope, StreamingHasher};
 use image_reader::{ImageReader, SourceFingerprint, open_image};
 use libewf_bindings::{EwfCompression, EwfWriteOptions, EwfWriter};
@@ -107,19 +105,6 @@ pub struct AcquisitionResult {
     pub status: AcquisitionStatus,
     pub manifest: AcquisitionManifest,
     pub manifest_path: PathBuf,
-}
-
-#[derive(Debug, Clone, Default)]
-pub struct CancellationToken(Arc<AtomicBool>);
-
-impl CancellationToken {
-    pub fn cancel(&self) {
-        self.0.store(true, Ordering::SeqCst);
-    }
-
-    pub fn is_cancelled(&self) -> bool {
-        self.0.load(Ordering::SeqCst)
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

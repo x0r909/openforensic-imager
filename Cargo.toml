@@ -15,6 +15,7 @@ members = [
     "crates/filesystem",
     "crates/viewer",
     "crates/extraction",
+    "crates/job-manager",
     "tests/fixtures",
     "tests/integration",
 ]
@@ -36,4 +37,5 @@ sha1 = "0.11"
 sha2 = "0.11"
 tempfile = "3"
 time = { version = "0.3", features = ["formatting", "parsing", "serde"] }
+tokio = { version = "1", features = ["rt-multi-thread", "time"] }
 uuid = { version = "1", features = ["serde", "v4"] }

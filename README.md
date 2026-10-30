@@ -35,6 +35,8 @@ and verified on the local workspace:
   protection.
 - Source/output SHA-256 verification for every successful export.
 - Extraction metadata and JSON, CSV, and HTML reports.
+- Tokio background jobs with progress, cancellation, partial outcomes, and
+  panic containment.
 
 Architecture and review gates:
 
@@ -115,9 +117,10 @@ investigation input only. It must not be committed or redistributed.
 
 ## Implementation gate
 
-Phases 1 through 4 are complete at the core-library level. The next code phase
-is the Qt desktop shell and sandboxed preview rendering. The release dependency
-gate remains the pinned TSK and libewf build.
+Phases 1 through 4 are complete at the core-library level. Phase 5 background
+job infrastructure is implemented; the Qt desktop shell and sandboxed preview
+renderer remain. The release dependency gate remains the pinned TSK and libewf
+build.
 
 ## Documentation map
 
@@ -139,6 +142,8 @@ gate remains the pinned TSK and libewf build.
   partition, filesystem, timestamp, and TSK dependency evidence.
 - [docs/testing/phase4-results.md](docs/testing/phase4-results.md): Phase 4
   viewer, signature, extraction, report, and security evidence.
+- [docs/testing/phase5-background-jobs.md](docs/testing/phase5-background-jobs.md):
+  Phase 5 job-state, cancellation, progress, and panic-containment evidence.
 - [SECURITY_MODEL.md](SECURITY_MODEL.md): threat model and mandatory controls.
 - [docs/reverse-engineering/](docs/reverse-engineering/): FTK Imager evidence,
   limitations, and compatibility status.

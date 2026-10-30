@@ -1,6 +1,6 @@
 use std::str::FromStr;
 
-use forensic_core::{ByteRange, CaseId, CoreError, ErrorCode};
+use forensic_core::{ByteRange, CancellationToken, CaseId, CoreError, ErrorCode};
 use uuid::Uuid;
 
 #[test]
@@ -50,4 +50,14 @@ fn internal_errors_are_retryable() {
 
     assert_eq!(error.code(), ErrorCode::Internal);
     assert!(error.retryable());
+}
+
+#[test]
+fn cancellation_tokens_share_state_across_clones() {
+    let token = CancellationToken::default();
+    let worker = token.clone();
+
+    token.cancel();
+
+    assert!(worker.is_cancelled());
 }

@@ -146,6 +146,7 @@ crates/
   viewer/                  Bounded hex, text, signature, and preview preflight
   evidence-manager/        SQLite schema, migrations, evidence records
   extraction/              Safe path construction and file export
+  job-manager/             Tokio jobs, progress, cancellation, and snapshots
   reporting/               JSON, CSV, HTML report models and renderers
   audit-log/               Append-only hash-chained event log
   native-bindings/         C ABI, bindgen wrappers, worker RPC

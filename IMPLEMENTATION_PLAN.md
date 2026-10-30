@@ -355,6 +355,10 @@ the core currently supplies validated render plans and resource limits.
 6. Background task manager.
 7. Keyboard, accessibility, theme, and large-model tests.
 
+The background job manager is implemented and documented in
+[`docs/testing/phase5-background-jobs.md`](docs/testing/phase5-background-jobs.md).
+Qt shell, QML, models, and GUI tests remain open.
+
 ## Phase 6 execution outline
 
 1. Full audit reports and chain verification.
