@@ -1,0 +1,19 @@
+{
+  "generator_version": "phase1-v1",
+  "seed": 42,
+  "layout": {
+    "Dense": {
+      "length": 4096,
+      "block_size": 512
+    }
+  },
+  "byte_length": 4096,
+  "block_size": 512,
+  "segments": [
+    {
+      "path": "raw-000000000000002a-0000.raw",
+      "length": 4096,
+      "sha256": "7611e638224870011819968cc74d2e8a00169bbab60a1d2dc207adb055df0e6d"
+    }
+  ]
+}
