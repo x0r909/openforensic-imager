@@ -209,6 +209,53 @@ A successful submission returns a `job_id`. The caller polls
 `ofi_job_snapshot` and may call `ofi_job_cancel` while the job is non-terminal.
 Cancellation is cooperative; a terminal state remains immutable.
 
+Preview and extraction operations:
+
+```json
+{
+  "operation": "hex_preview",
+  "path": "/evidence/disk.E01",
+  "offset_bytes": 1048576,
+  "metadata_address": 42,
+  "file_offset": 0,
+  "length": 4096
+}
+```
+
+```json
+{
+  "operation": "text_preview",
+  "path": "/evidence/disk.E01",
+  "offset_bytes": 1048576,
+  "metadata_address": 42,
+  "file_offset": 0,
+  "max_bytes": 4096
+}
+```
+
+```json
+{
+  "operation": "file_signature",
+  "path": "/evidence/disk.E01",
+  "offset_bytes": 1048576,
+  "metadata_address": 42
+}
+```
+
+```json
+{
+  "operation": "extract_file",
+  "path": "/evidence/disk.E01",
+  "offset_bytes": 1048576,
+  "parent_inode": 2,
+  "metadata_address": 42,
+  "destination_root": "/cases/2026-001/exports"
+}
+```
+
+Preview length is capped at 64 KiB. Extraction requires the parent inode so the
+evidence name is resolved from a directory entry, not invented from metadata.
+
 ## Viewer page
 
 ```json

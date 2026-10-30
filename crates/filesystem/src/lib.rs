@@ -217,6 +217,21 @@ impl FileSystem {
         Ok(EvidenceFile { file, size })
     }
 
+    pub fn directory_entry(
+        &self,
+        parent_inode: u64,
+        metadata_address: u64,
+    ) -> Result<FileEntry, FileSystemError> {
+        self.list_directory(parent_inode)?
+            .into_iter()
+            .find(|entry| entry.metadata_address == metadata_address)
+            .ok_or_else(|| FileSystemError {
+                message: format!(
+                    "metadata address {metadata_address} has no name in parent inode {parent_inode}"
+                ),
+            })
+    }
+
     fn convert_entry(&self, info: FileInfo) -> FileEntry {
         let semantics = timestamp_semantics(self.kind);
         FileEntry {

@@ -11,13 +11,15 @@ use acquisition::{
     acquire_path_with_cancel, verify_image,
 };
 use evidence_manager::{AddEvidence, CaseStore, CreateCase, SourceSnapshot};
-use filesystem::FileSystem;
+use extraction::{ExtractionOptions, Extractor};
+use filesystem::{EvidenceFile, FileSystem};
 use forensic_core::{CaseId, EvidenceId, JobId};
 use hashing::HashAlgorithm;
 use job_manager::{JobError, JobManager, JobOutcome};
 use partition_analyzer::analyze_partitions;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use viewer::{ByteSource, SourceError, hex_page, identify_signature, preview_text};
 
 const ABI_MAJOR: u32 = 1;
 const ABI_MINOR: u32 = 1;
@@ -81,6 +83,32 @@ enum JobRequest {
         format: OutputFormat,
         options: AcquisitionOptions,
     },
+    HexPreview {
+        path: String,
+        offset_bytes: u64,
+        metadata_address: u64,
+        file_offset: u64,
+        length: usize,
+    },
+    TextPreview {
+        path: String,
+        offset_bytes: u64,
+        metadata_address: u64,
+        file_offset: u64,
+        max_bytes: usize,
+    },
+    FileSignature {
+        path: String,
+        offset_bytes: u64,
+        metadata_address: u64,
+    },
+    ExtractFile {
+        path: String,
+        offset_bytes: u64,
+        parent_inode: u64,
+        metadata_address: u64,
+        destination_root: String,
+    },
 }
 
 #[allow(non_camel_case_types)]
@@ -100,6 +128,22 @@ struct FfiError {
     status: ofi_status,
     code: &'static str,
     message: String,
+}
+
+struct EvidenceByteSource<'a> {
+    file: EvidenceFile<'a>,
+}
+
+impl ByteSource for EvidenceByteSource<'_> {
+    fn len(&self) -> u64 {
+        self.file.size()
+    }
+
+    fn read_at(&self, offset: u64, buffer: &mut [u8]) -> Result<usize, SourceError> {
+        self.file
+            .read_at(offset, buffer)
+            .map_err(|error| SourceError::new(error.to_string()))
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -605,6 +649,75 @@ fn handle_job_submit(manager: &JobManager, request: &[u8]) -> Result<Vec<u8>, Ff
                 )),
                 AcquisitionStatus::Cancelled => Err(JobError::cancelled("acquisition cancelled")),
             }
+        }),
+        JobRequest::HexPreview {
+            path,
+            offset_bytes,
+            metadata_address,
+            file_offset,
+            length,
+        } => manager.submit("hex_preview", move |_| {
+            let filesystem = FileSystem::open(Path::new(&path), offset_bytes)
+                .map_err(|error| JobError::failed("filesystem.open", error.to_string()))?;
+            let file = filesystem
+                .open_file(metadata_address)
+                .map_err(|error| JobError::failed("filesystem.file", error.to_string()))?;
+            let source = EvidenceByteSource { file };
+            let page = hex_page(&source, file_offset, length)
+                .map_err(|error| JobError::failed("preview.hex", error.to_string()))?;
+            job_success(page)
+        }),
+        JobRequest::TextPreview {
+            path,
+            offset_bytes,
+            metadata_address,
+            file_offset,
+            max_bytes,
+        } => manager.submit("text_preview", move |_| {
+            let filesystem = FileSystem::open(Path::new(&path), offset_bytes)
+                .map_err(|error| JobError::failed("filesystem.open", error.to_string()))?;
+            let file = filesystem
+                .open_file(metadata_address)
+                .map_err(|error| JobError::failed("filesystem.file", error.to_string()))?;
+            let source = EvidenceByteSource { file };
+            let preview = preview_text(&source, file_offset, max_bytes)
+                .map_err(|error| JobError::failed("preview.text", error.to_string()))?;
+            job_success(preview)
+        }),
+        JobRequest::FileSignature {
+            path,
+            offset_bytes,
+            metadata_address,
+        } => manager.submit("file_signature", move |_| {
+            let filesystem = FileSystem::open(Path::new(&path), offset_bytes)
+                .map_err(|error| JobError::failed("filesystem.open", error.to_string()))?;
+            let file = filesystem
+                .open_file(metadata_address)
+                .map_err(|error| JobError::failed("filesystem.file", error.to_string()))?;
+            let source = EvidenceByteSource { file };
+            let signature = identify_signature(&source)
+                .map_err(|error| JobError::failed("preview.signature", error.to_string()))?;
+            job_success(signature)
+        }),
+        JobRequest::ExtractFile {
+            path,
+            offset_bytes,
+            parent_inode,
+            metadata_address,
+            destination_root,
+        } => manager.submit("extract_file", move |_| {
+            let filesystem = FileSystem::open(Path::new(&path), offset_bytes)
+                .map_err(|error| JobError::failed("filesystem.open", error.to_string()))?;
+            let entry = filesystem
+                .directory_entry(parent_inode, metadata_address)
+                .map_err(|error| JobError::failed("filesystem.file", error.to_string()))?;
+            let mut extractor =
+                Extractor::create(Path::new(&destination_root), ExtractionOptions::default())
+                    .map_err(|error| JobError::failed("extraction.root", error.to_string()))?;
+            let record = extractor
+                .extract_file(&filesystem, &entry)
+                .map_err(|error| JobError::failed("extraction.file", error.to_string()))?;
+            job_success(record)
         }),
     }
     .map_err(job_submit_error)?;

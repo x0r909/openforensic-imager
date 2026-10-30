@@ -291,3 +291,191 @@ fn zero_job_workers_is_rejected() {
     assert!(manager.is_null());
     assert_eq!(unsafe { error_code(error) }, "job.invalid_worker_count");
 }
+
+unsafe fn submit_request(manager: *mut ofi_job_manager, request: &serde_json::Value) -> String {
+    let request = serde_json::to_vec(request).unwrap();
+    let mut response = ptr::null_mut();
+    let mut response_len = 0;
+    let mut error = ptr::null_mut();
+    let status = unsafe {
+        ofi_job_submit(
+            manager,
+            request.as_ptr(),
+            request.len(),
+            &mut response,
+            &mut response_len,
+            &mut error,
+        )
+    };
+    assert_eq!(status, ofi_status::OFI_STATUS_OK);
+    assert!(error.is_null());
+    let submitted = unsafe { response_json(response, response_len) };
+    unsafe { ofi_bytes_free(response, response_len) };
+    submitted["body"]["job_id"].as_str().unwrap().to_owned()
+}
+
+unsafe fn wait_for_job(manager: *mut ofi_job_manager, job_id: &str) -> serde_json::Value {
+    let job_id = CString::new(job_id).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let mut response = ptr::null_mut();
+        let mut response_len = 0;
+        let mut error = ptr::null_mut();
+        let status = unsafe {
+            ofi_job_snapshot(
+                manager,
+                job_id.as_ptr(),
+                &mut response,
+                &mut response_len,
+                &mut error,
+            )
+        };
+        assert_eq!(status, ofi_status::OFI_STATUS_OK);
+        assert!(error.is_null());
+        let snapshot = unsafe { response_json(response, response_len) };
+        unsafe { ofi_bytes_free(response, response_len) };
+        if matches!(
+            snapshot["body"]["status"].as_str(),
+            Some("succeeded" | "partial" | "failed" | "cancelled")
+        ) {
+            return snapshot;
+        }
+        assert!(Instant::now() < deadline, "job did not finish");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+#[test]
+fn preview_and_extraction_jobs_return_bounded_results() {
+    let directory = tempdir().unwrap();
+    let image = directory.path().join("phase5.raw");
+    std::fs::File::create(&image)
+        .unwrap()
+        .set_len(64 * 1024 * 1024)
+        .unwrap();
+    let output = Command::new("mke2fs")
+        .args(["-q", "-F", "-t", "ext4", "-L", "PHASE5"])
+        .arg(&image)
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let text = directory.path().join("hello.txt");
+    std::fs::write(&text, b"hello from phase five\n").unwrap();
+    let png = directory.path().join("image.png");
+    std::fs::write(&png, b"\x89PNG\r\n\x1a\n\0\0\0\rIHDR").unwrap();
+    for (source, destination) in [(&text, "/hello.txt"), (&png, "/image.png")] {
+        let output = Command::new("debugfs")
+            .args(["-w", "-R"])
+            .arg(format!("write {} {destination}", source.display()))
+            .arg(&image)
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+    }
+    let mut manager: *mut ofi_job_manager = ptr::null_mut();
+    let mut error = ptr::null_mut();
+    assert_eq!(
+        unsafe { ofi_job_manager_new(2, &mut manager, &mut error) },
+        ofi_status::OFI_STATUS_OK
+    );
+    let list_id = unsafe {
+        submit_request(
+            manager,
+            &serde_json::json!({
+                "operation": "filesystem_list",
+                "path": image,
+                "offset_bytes": 0,
+                "inode": 2,
+            }),
+        )
+    };
+    let list = unsafe { wait_for_job(manager, &list_id) };
+    assert_eq!(list["body"]["status"], "succeeded");
+    let entries = list["body"]["result"]["entries"].as_array().unwrap();
+    let text_entry = entries
+        .iter()
+        .find(|entry| entry["name"] == "hello.txt")
+        .unwrap();
+    let png_entry = entries
+        .iter()
+        .find(|entry| entry["name"] == "image.png")
+        .unwrap();
+    let text_address = text_entry["metadata_address"].as_u64().unwrap();
+    let png_address = png_entry["metadata_address"].as_u64().unwrap();
+
+    let hex_id = unsafe {
+        submit_request(
+            manager,
+            &serde_json::json!({
+                "operation": "hex_preview",
+                "path": image,
+                "offset_bytes": 0,
+                "metadata_address": text_address,
+                "file_offset": 0,
+                "length": 8,
+            }),
+        )
+    };
+    let hex = unsafe { wait_for_job(manager, &hex_id) };
+    assert_eq!(
+        hex["body"]["result"]["bytes"],
+        serde_json::json!([104, 101, 108, 108, 111, 32, 102, 114])
+    );
+
+    let text_id = unsafe {
+        submit_request(
+            manager,
+            &serde_json::json!({
+                "operation": "text_preview",
+                "path": image,
+                "offset_bytes": 0,
+                "metadata_address": text_address,
+                "file_offset": 0,
+                "max_bytes": 256,
+            }),
+        )
+    };
+    let preview = unsafe { wait_for_job(manager, &text_id) };
+    assert_eq!(preview["body"]["result"]["content"], "text");
+    assert_eq!(preview["body"]["result"]["text"], "hello from phase five\n");
+
+    let signature_id = unsafe {
+        submit_request(
+            manager,
+            &serde_json::json!({
+                "operation": "file_signature",
+                "path": image,
+                "offset_bytes": 0,
+                "metadata_address": png_address,
+            }),
+        )
+    };
+    let signature = unsafe { wait_for_job(manager, &signature_id) };
+    assert_eq!(signature["body"]["result"]["kind"], "png");
+
+    let destination = directory.path().join("export");
+    let extract_id = unsafe {
+        submit_request(
+            manager,
+            &serde_json::json!({
+                "operation": "extract_file",
+                "path": image,
+                "offset_bytes": 0,
+                "parent_inode": 2,
+                "metadata_address": text_address,
+                "destination_root": destination,
+            }),
+        )
+    };
+    let extraction = unsafe { wait_for_job(manager, &extract_id) };
+    assert_eq!(extraction["body"]["status"], "succeeded");
+    assert_eq!(
+        std::fs::read(destination.join("hello.txt")).unwrap(),
+        b"hello from phase five\n"
+    );
+    assert_eq!(
+        extraction["body"]["result"]["output_sha256"],
+        extraction["body"]["result"]["source_sha256"]
+    );
+    unsafe { ofi_job_manager_free(manager) };
+}

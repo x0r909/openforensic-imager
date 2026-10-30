@@ -472,6 +472,7 @@ version = "0.1.0"
 dependencies = [
  "acquisition",
  "evidence-manager",
+ "extraction",
  "filesystem",
  "forensic-core",
  "hashing",
@@ -481,6 +482,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "uuid",
+ "viewer",
 ]
 
 [[package]]

@@ -38,7 +38,8 @@ and verified on the local workspace:
 - Tokio background jobs with progress, cancellation, partial outcomes, and
   panic containment.
 - C ABI 1.1 job submission, snapshot, cancellation, partition analysis,
-  filesystem listing, verification, and acquisition.
+  filesystem listing, verification, acquisition, bounded preview, signature
+  identification, and single-file extraction.
 
 Architecture and review gates:
 

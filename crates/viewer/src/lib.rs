@@ -95,14 +95,14 @@ impl fmt::Display for ViewerError {
 
 impl std::error::Error for ViewerError {}
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HexRow {
     pub offset: u64,
     pub hex: String,
     pub ascii: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HexPage {
     pub offset: u64,
     pub bytes: Vec<u8>,

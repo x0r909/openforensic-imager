@@ -15,6 +15,8 @@ Date: 2026-10-30
 - C ABI 1.1 manager lifecycle, submission, snapshot, and cancellation calls.
 - C ABI job dispatch for partition analysis, filesystem listing, verification,
   and acquisition.
+- C ABI job dispatch for bounded hex/text preview, signature identification, and
+  single-file extraction.
 
 ## Verification evidence
 
@@ -26,7 +28,7 @@ CARGO_TARGET_DIR=target/verify-tests cargo test --workspace --no-run --message-f
 
 Every emitted test executable was run with `--test-threads=1`.
 
-Result: 39 test executables, 114 tests passed, 0 failed.
+Result: 39 test executables, 117 tests passed, 0 failed.
 
 The C ABI smoke harness also compiles with `-Wall -Wextra -Werror` and exits 0
 after creating and releasing a job manager.
@@ -38,4 +40,5 @@ after creating and releasing a job manager.
   worker RPC remain Phase 6 work.
 - Completed job records are retained for the process lifetime. Persistence,
   retention, and case-database integration remain future work.
-- The C ABI job dispatcher does not yet expose hex/text preview or extraction.
+- The C ABI job dispatcher does not yet expose directory extraction or report
+  generation.

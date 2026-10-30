@@ -11,11 +11,13 @@ crate-type = ["rlib", "cdylib", "staticlib"]
 [dependencies]
 acquisition = { path = "../acquisition" }
 evidence-manager = { path = "../evidence-manager" }
+extraction = { path = "../extraction" }
 filesystem = { path = "../filesystem" }
 forensic-core = { path = "../forensic-core" }
 hashing = { path = "../hashing" }
 job-manager = { path = "../job-manager" }
 partition-analyzer = { path = "../partition-analyzer" }
+viewer = { path = "../viewer" }
 serde.workspace = true
 serde_json.workspace = true
 

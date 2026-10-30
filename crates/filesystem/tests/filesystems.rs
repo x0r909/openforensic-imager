@@ -226,3 +226,55 @@ fn reads_an_evidence_file_in_bounded_chunks() {
     assert_eq!(second_count, CONTENT.len() - 4);
     assert_eq!(&second[..second_count], &CONTENT[4..]);
 }
+
+#[test]
+fn resolves_an_evidence_file_entry_by_metadata_address() {
+    let directory = tempdir().unwrap();
+    let source = write_source(directory.path());
+    let image = directory.path().join("ext4-entry.raw");
+    create_sized(&image, 64 * 1024 * 1024);
+    run(Command::new("mke2fs")
+        .arg("-q")
+        .arg("-F")
+        .arg("-t")
+        .arg("ext4")
+        .arg(&image));
+    run_debugfs(&image, &format!("write {} /hello.txt", source.display()));
+    let filesystem = FileSystem::open(&image, 0).unwrap();
+    let entry = filesystem
+        .list_directory(filesystem.root_inode())
+        .unwrap()
+        .into_iter()
+        .find(|entry| entry.name == "hello.txt")
+        .unwrap();
+
+    let resolved = filesystem
+        .directory_entry(entry.parent_address, entry.metadata_address)
+        .unwrap();
+
+    assert_eq!(resolved.name, entry.name);
+    assert_eq!(resolved.size, entry.size);
+    assert_eq!(resolved.metadata_address, entry.metadata_address);
+}
+
+#[test]
+fn missing_parent_entry_is_a_typed_error() {
+    let directory = tempdir().unwrap();
+    let source = write_source(directory.path());
+    let image = directory.path().join("ext4-missing-entry.raw");
+    create_sized(&image, 64 * 1024 * 1024);
+    run(Command::new("mke2fs")
+        .arg("-q")
+        .arg("-F")
+        .arg("-t")
+        .arg("ext4")
+        .arg(&image));
+    run_debugfs(&image, &format!("write {} /hello.txt", source.display()));
+    let filesystem = FileSystem::open(&image, 0).unwrap();
+
+    let error = filesystem
+        .directory_entry(filesystem.root_inode(), u64::MAX)
+        .unwrap_err();
+
+    assert!(error.message().contains("metadata address"));
+}
