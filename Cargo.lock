@@ -235,6 +235,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "da7c62ceae207dd37ea5b845da6a0696c799f85e97da1ab5b7910be3c1c80223"
 
 [[package]]
+name = "filesystem"
+version = "0.1.0"
+dependencies = [
+ "forensic-core",
+ "serde",
+ "tempfile",
+ "tsk-bindings",
+]
+
+[[package]]
 name = "find-msvc-tools"
 version = "0.1.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -465,16 +475,27 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9f7c3e4beb33f85d45ae3e3a1792185706c8e16d043238c593331cc7cd313b50"
 
 [[package]]
+name = "partition-analyzer"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "tempfile",
+ "tsk-bindings",
+]
+
+[[package]]
 name = "phase1-integration"
 version = "0.1.0"
 dependencies = [
  "audit-log",
  "evidence-manager",
+ "filesystem",
  "forensic-core",
  "forensic-fixtures",
  "hashing",
  "image-reader",
  "native-bindings",
+ "partition-analyzer",
  "tempfile",
  "uuid",
 ]
@@ -850,6 +871,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "baa693a8032d7e1cada7d0041e96126df243179ff061456783ac7f12bda4744c"
 dependencies = [
  "winnow",
+]
+
+[[package]]
+name = "tsk-bindings"
+version = "0.1.0"
+dependencies = [
+ "cc",
+ "libc",
+ "pkg-config",
 ]
 
 [[package]]

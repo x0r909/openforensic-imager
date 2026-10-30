@@ -15,5 +15,7 @@ forensic-fixtures = { path = "../fixtures" }
 hashing = { path = "../../crates/hashing" }
 image-reader = { path = "../../crates/image-reader" }
 native-bindings = { path = "../../crates/native-bindings" }
+filesystem = { path = "../../crates/filesystem" }
+partition-analyzer = { path = "../../crates/partition-analyzer" }
 tempfile.workspace = true
 uuid.workspace = true

@@ -4,8 +4,9 @@ Linux-native digital forensics acquisition and evidence analysis platform.
 
 ## Current status
 
-Phase 0 is complete. Phase 1 core and Phase 2 acquisition/verification are
-implemented and verified on the local workspace:
+Phase 0 is complete. Phase 1 core, Phase 2 acquisition/verification, and Phase 3
+partition/filesystem analysis are implemented and verified on the local
+workspace:
 
 - Rust workspace and domain primitives.
 - Streaming MD5, SHA-1, SHA-256, and SHA-512 hashing.
@@ -23,8 +24,13 @@ implemented and verified on the local workspace:
   outcomes.
 - Cancellation and unreadable-range accounting with partial status.
 - JSON, CSV, and HTML acquisition plus verification reports.
+- MBR and GPT partition discovery through TSK.
+- Read-only NTFS, FAT32, exFAT, and ext4 filesystem exploration through TSK.
+- File metadata, bounded file reads, and deleted-name status.
+- Explicit timestamp semantics for UTC and local wall-clock evidence times.
+- Package-config discovery of TSK instead of hardcoded host include paths.
 
-Phase 3 has not started. Its parser work remains gated on:
+Architecture and review gates:
 
 - [ARCHITECTURE.md](ARCHITECTURE.md)
 - [REQUIREMENTS.md](REQUIREMENTS.md)
@@ -32,9 +38,10 @@ Phase 3 has not started. Its parser work remains gated on:
 - [SECURITY_MODEL.md](SECURITY_MODEL.md)
 - [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md)
 
-The verified Phase 1 and Phase 2 results are documented in
-[docs/testing/phase1-results.md](docs/testing/phase1-results.md) and
-[docs/testing/phase2-results.md](docs/testing/phase2-results.md). The detailed
+The verified Phase 1, Phase 2, and Phase 3 results are documented in
+[docs/testing/phase1-results.md](docs/testing/phase1-results.md),
+[docs/testing/phase2-results.md](docs/testing/phase2-results.md), and
+[docs/testing/phase3-results.md](docs/testing/phase3-results.md). The detailed
 feasibility findings are in [FEASIBILITY_REPORT.md](FEASIBILITY_REPORT.md) and
 [docs/reverse-engineering/](docs/reverse-engineering/).
 
@@ -100,8 +107,8 @@ investigation input only. It must not be committed or redistributed.
 
 ## Implementation gate
 
-Phases 1 and 2 are complete at the core-library level. The next code phase is
-partition and filesystem analysis through a pinned TSK build.
+Phases 1 through 3 are complete at the core-library level. The release
+dependency gate remains the pinned TSK and libewf build.
 
 ## Documentation map
 
@@ -119,6 +126,8 @@ partition and filesystem analysis through a pinned TSK build.
   1 verification commands, results, and limitations.
 - [docs/testing/phase2-results.md](docs/testing/phase2-results.md): Phase 2
   acquisition, E01, verification, report evidence, and limitations.
+- [docs/testing/phase3-results.md](docs/testing/phase3-results.md): Phase 3
+  partition, filesystem, timestamp, and TSK dependency evidence.
 - [SECURITY_MODEL.md](SECURITY_MODEL.md): threat model and mandatory controls.
 - [docs/reverse-engineering/](docs/reverse-engineering/): FTK Imager evidence,
   limitations, and compatibility status.
