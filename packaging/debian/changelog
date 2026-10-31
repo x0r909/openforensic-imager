@@ -1,6 +1,6 @@
 openforensic-imager (0.1.0-1) unstable; urgency=medium
 
-  * Phase 7 development package with DEB, AppImage, Flatpak analysis build,
-    SBOM, and installation smoke tests.
+  * Phase 8 development package with a sandboxed parser worker, DEB, AppImage,
+    Flatpak analysis build, SBOM, and installation smoke tests.
 
  -- OpenForensic Imager Maintainers <maintainer@invalid>  Fri, 30 Oct 2026 00:00:00 +0000

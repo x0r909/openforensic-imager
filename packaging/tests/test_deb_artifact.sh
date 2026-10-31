@@ -17,6 +17,7 @@ dpkg-deb --info "$deb" >"$deb.info"
 dpkg-deb --contents "$deb" >"$deb.contents"
 
 grep -q './usr/bin/openforensic-imager' "$deb.contents"
+grep -q './usr/bin/ofi-parser-worker' "$deb.contents"
 grep -q './usr/lib/openforensic-imager/libnative_bindings.so' "$deb.contents"
 grep -q './usr/share/applications/io.github.x0r909.OpenForensicImager.desktop' "$deb.contents"
 grep -q './usr/share/icons/hicolor/scalable/apps/io.github.x0r909.OpenForensicImager.svg' \
@@ -28,7 +29,8 @@ grep -q 'Depends:.*libewf' "$deb.info"
 grep -q 'Depends:.*libqt6' "$deb.info"
 
 extract_root=$(mktemp -d)
-trap 'rm -rf "$extract_root"' EXIT
+worker_root=$(mktemp -d)
+trap 'rm -rf "$extract_root" "$worker_root"' EXIT
 dpkg-deb --extract "$deb" "$extract_root"
 
 readelf -d "$extract_root/usr/bin/openforensic-imager" \
@@ -36,6 +38,15 @@ readelf -d "$extract_root/usr/bin/openforensic-imager" \
 
 env -u LD_LIBRARY_PATH QT_QPA_PLATFORM=offscreen \
     timeout 20 "$extract_root/usr/bin/openforensic-imager" --self-test
+test -x "$extract_root/usr/bin/ofi-parser-worker"
+truncate -s 4096 "$worker_root/evidence.raw"
+worker_response=$(
+    printf '{"operation":"image_identify","path":"%s"}\n' \
+        "$worker_root/evidence.raw" \
+        | env -u LD_LIBRARY_PATH "$extract_root/usr/bin/ofi-parser-worker"
+)
+printf '%s' "$worker_response" \
+    | jq -e '.ok == true and .outcome.result.format == "raw"' >/dev/null
 
 desktop-file-validate \
     "$extract_root/usr/share/applications/io.github.x0r909.OpenForensicImager.desktop"

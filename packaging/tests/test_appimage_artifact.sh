@@ -28,8 +28,18 @@ grep -q '^X-AppImage-Version=0.1.0' \
 test -x "$extract_root/squashfs-root/AppRun"
 test -f "$extract_root/squashfs-root/.DirIcon"
 test -f "$extract_root/squashfs-root/usr/lib/openforensic-imager/libnative_bindings.so"
+test -x "$extract_root/squashfs-root/usr/bin/ofi-parser-worker"
 test -f "$extract_root/squashfs-root/usr/plugins/platforms/libqoffscreen.so"
 test -d "$extract_root/squashfs-root/usr/qml/QtQuick"
 test -f "$extract_root/squashfs-root/usr/share/doc/openforensic-imager/THIRD_PARTY.md"
+truncate -s 4096 "$extract_root/evidence.raw"
+worker_response=$(
+    printf '{"operation":"image_identify","path":"%s"}\n' \
+        "$extract_root/evidence.raw" \
+        | LD_LIBRARY_PATH="$extract_root/squashfs-root/usr/lib:$extract_root/squashfs-root/usr/lib/openforensic-imager" \
+            "$extract_root/squashfs-root/usr/bin/ofi-parser-worker"
+)
+printf '%s' "$worker_response" \
+    | jq -e '.ok == true and .outcome.result.format == "raw"' >/dev/null
 
 printf 'AppImage artifact passed: %s\n' "$appimage"

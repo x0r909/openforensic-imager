@@ -44,8 +44,9 @@ cmake -E make_directory "$appdir"
 cp -a "$stage/usr" "$appdir/usr"
 
 app="$appdir/usr/bin/openforensic-imager"
+worker="$appdir/usr/bin/ofi-parser-worker"
 native="$appdir/usr/lib/openforensic-imager/libnative_bindings.so"
-if [[ ! -x "$app" || ! -f "$native" ]]; then
+if [[ ! -x "$app" || ! -x "$worker" || ! -f "$native" ]]; then
     printf 'recorded release tree is incomplete\n' >&2
     exit 1
 fi
@@ -72,7 +73,8 @@ cp -a "$qt_qml" "$appdir/usr/qml"
 
 binaries=$(
     {
-        printf '%s\n' "$app" "$native"
+        printf '%s\n' "$app" "$native" \
+            "$appdir/usr/bin/ofi-parser-worker"
         find "$appdir/usr/plugins" "$appdir/usr/qml" -type f -name '*.so'
     } | sort -u
 )
