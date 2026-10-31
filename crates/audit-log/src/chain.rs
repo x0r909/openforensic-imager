@@ -121,34 +121,69 @@ pub(crate) fn append_record(
 }
 
 pub(crate) fn lock_exclusive(file: &File) -> Result<(), AuditError> {
-    lock_file(file, libc::LOCK_EX)
+    lock_file_waiting(file, libc::LOCK_EX)
 }
 
-pub(crate) fn lock_shared(file: &File) -> Result<(), AuditError> {
-    lock_file(file, libc::LOCK_SH)
+/// Takes an exclusive lock, waiting briefly for an in-progress reader or writer.
+///
+/// A short-lived contention is normal (a concurrent verification holds a shared
+/// lock), so failing immediately would turn ordinary concurrent use into a
+/// spurious `audit.append_after_commit`. The wait is bounded by
+/// `LOCK_WAIT_LIMIT` so a genuinely stuck peer still produces a typed error
+/// instead of hanging.
+/// How long a reader or writer waits for a held audit-log lock.
+const LOCK_WAIT_LIMIT: std::time::Duration = std::time::Duration::from_millis(250);
+
+pub(crate) fn lock_file_waiting(file: &File, operation: i32) -> Result<(), AuditError> {
+    let raw = file.as_raw_fd();
+    let deadline = std::time::Instant::now() + LOCK_WAIT_LIMIT;
+    loop {
+        let result = unsafe { libc::flock(raw, operation | libc::LOCK_NB) };
+        if result == 0 {
+            return Ok(());
+        }
+        let error = std::io::Error::last_os_error();
+        if error.raw_os_error() != Some(libc::EWOULDBLOCK) {
+            return Err(map_io(error));
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err(AuditError::new(
+                AuditErrorCode::Locked,
+                "audit log is locked by another writer",
+            ));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
 }
 
-fn lock_file(file: &File, operation: i32) -> Result<(), AuditError> {
-    // The file owns the descriptor for the lifetime of the lock.
-    let result = unsafe { libc::flock(file.as_raw_fd(), operation | libc::LOCK_NB) };
-    if result == 0 {
-        return Ok(());
-    }
-    let error = std::io::Error::last_os_error();
-    if error.raw_os_error() == Some(libc::EWOULDBLOCK) {
-        Err(AuditError::new(
-            AuditErrorCode::Locked,
-            "audit log is locked by another writer",
-        ))
-    } else {
-        Err(map_io(error))
-    }
+/// Takes a shared lock, waiting for an in-progress writer instead of failing.
+///
+/// A verification is a read: a concurrent append is transient and will finish,
+/// so reporting "locked by another writer" would make ordinary verification
+/// flaky rather than protective. The wait is bounded so a permanently stuck
+/// writer still produces a typed error.
+pub(crate) fn lock_shared_waiting(file: &File) -> Result<(), AuditError> {
+    lock_file_waiting(file, libc::LOCK_SH)
 }
+
 
 pub(crate) fn read_last_record(file: &mut File) -> Result<(u64, Option<Sha256Digest>), AuditError> {
     let length = file.metadata().map_err(map_io)?.len();
     if length == 0 {
         return Ok((0, None));
+    }
+
+    // A chain is only durably complete when its last record is terminated. A
+    // byte-truncated prefix otherwise ends on a complete record with no newline
+    // and would be accepted as a shorter valid history.
+    file.seek(SeekFrom::End(-1)).map_err(map_io)?;
+    let mut terminator = [0_u8; 1];
+    file.read_exact(&mut terminator).map_err(map_io)?;
+    if terminator[0] != b'\n' {
+        return Err(AuditError::new(
+            AuditErrorCode::Corrupt,
+            "audit log does not end with a complete record",
+        ));
     }
 
     let start = length.saturating_sub(MAX_LAST_RECORD_BYTES);
@@ -182,6 +217,27 @@ pub(crate) fn read_last_record(file: &mut File) -> Result<(u64, Option<Sha256Dig
             "last audit record hash does not match its contents",
         ));
     }
+
+    // The tail is only a usable head when the whole chain behind it verifies.
+    // Without this the next append links to an unverified ancestor, so a forged
+    // or truncated history would be re-anchored and later reported as valid.
+    // `try_clone` shares the file offset, so rewind before reading from the start.
+    file.seek(SeekFrom::Start(0)).map_err(map_io)?;
+    let reopen = file.try_clone().map_err(map_io)?;
+    let status = verify(reopen)?;
+    if let Some(reason) = status.reason() {
+        return Err(AuditError::new(
+            AuditErrorCode::Corrupt,
+            format!("existing audit chain is invalid: {reason}"),
+        ));
+    }
+    let verified_head = status.head_hash();
+    if verified_head != Some(&record.record_hash) || status.record_count() != record.sequence {
+        return Err(AuditError::new(
+            AuditErrorCode::Corrupt,
+            "last audit record is not the verified chain head",
+        ));
+    }
     Ok((record.sequence, Some(record.record_hash)))
 }
 
@@ -192,6 +248,7 @@ pub(crate) fn verify(file: File) -> Result<AuditChainStatus, AuditError> {
     let mut previous_hash = None;
     let mut record_count = 0_u64;
     let mut reason = None;
+    let mut terminated = false;
 
     loop {
         line.clear();
@@ -199,8 +256,11 @@ pub(crate) fn verify(file: File) -> Result<AuditChainStatus, AuditError> {
         if bytes_read == 0 {
             break;
         }
+        // Track whether this record was newline-terminated before stripping it.
+        terminated = false;
         while line.last() == Some(&b'\n') || line.last() == Some(&b'\r') {
             line.pop();
+            terminated = true;
         }
         if line.is_empty() {
             reason = Some("blank audit line".to_owned());
@@ -235,6 +295,12 @@ pub(crate) fn verify(file: File) -> Result<AuditChainStatus, AuditError> {
         record_count = record.sequence;
         previous_hash = Some(record.record_hash);
         expected_sequence += 1;
+    }
+
+    // A chain whose final record was cut short is a truncated history, not a
+    // complete one, even when every surviving record is individually valid.
+    if reason.is_none() && record_count > 0 && !terminated {
+        reason = Some("audit log does not end with a complete record".to_owned());
     }
 
     Ok(AuditChainStatus {

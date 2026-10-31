@@ -172,6 +172,56 @@ fn truncated_record_breaks_the_chain() {
 }
 
 #[test]
+fn verified_chain_head_is_required_before_appending() {
+    let directory = tempdir().unwrap();
+    let path = directory.path().join("audit.jsonl");
+    {
+        let mut log = AuditLog::open_append(&path).unwrap();
+        log.append(event("case.created")).unwrap();
+        log.append(event("evidence.added")).unwrap();
+    }
+
+    // A forged, self-consistent record that restarts the chain at sequence 1
+    // must not become the new head, or later events would re-link to it and
+    // verify would report the forged history as valid. The single record here is
+    // internally valid on its own (sequence 1, no previous hash), so only
+    // cross-record reasoning can reject it.
+    let original = lines(&path);
+    let mut forged = original[0].clone();
+    forged["action"] = serde_json::json!("case.created");
+    forged["details"] = serde_json::json!({"note": "rewritten by a local principal"});
+    let forged_line = serde_json::to_string(&forged).unwrap();
+
+    // Sanity: the forgery is self-consistent as far as a single record goes.
+    assert_eq!(forged["sequence"], serde_json::json!(1));
+    assert!(forged["previous_hash"].is_null());
+
+    std::fs::write(&path, format!("{forged_line}\n")).unwrap();
+
+    let reopened = AuditLog::open_append(&path);
+    assert!(
+        reopened.is_err(),
+        "a rewritten history must not be accepted as the chain head"
+    );
+
+    // A byte-truncated prefix also ends without a terminator and must be rejected.
+    let directory = tempdir().unwrap();
+    let path = directory.path().join("audit.jsonl");
+    {
+        let mut log = AuditLog::open_append(&path).unwrap();
+        log.append(event("case.created")).unwrap();
+        log.append(event("evidence.added")).unwrap();
+    }
+    let text = std::fs::read_to_string(&path).unwrap();
+    let cut = text.rfind('\n').unwrap();
+    std::fs::write(&path, &text[..cut]).unwrap();
+    assert!(
+        AuditLog::open_append(&path).is_err(),
+        "a truncated history must not be extended"
+    );
+}
+
+#[test]
 fn new_audit_log_is_owner_only() {
     let directory = tempdir().unwrap();
     let path = directory.path().join("audit.jsonl");

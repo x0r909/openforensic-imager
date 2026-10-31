@@ -5,13 +5,13 @@ use std::fmt;
 use std::fs::{File, OpenOptions};
 use std::io::{Seek, Write};
 use std::os::unix::fs::OpenOptionsExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use forensic_core::{CaseId, JobId, UtcTimestamp};
 use serde::ser::SerializeStruct;
 use serde::{Deserialize, Serialize, Serializer};
 
-use chain::{append_record, hash_record, lock_exclusive, lock_shared, read_last_record, verify};
+use chain::{append_record, hash_record, lock_exclusive, lock_shared_waiting, read_last_record, verify};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AuditEvent {
@@ -120,6 +120,7 @@ impl std::error::Error for AuditError {}
 #[derive(Debug)]
 pub struct AuditLog {
     file: File,
+    path: PathBuf,
     last_sequence: u64,
     last_hash: Option<Sha256Digest>,
     poisoned: bool,
@@ -140,6 +141,7 @@ impl AuditLog {
         file.seek(std::io::SeekFrom::End(0)).map_err(map_io)?;
         Ok(Self {
             file,
+            path: path.to_path_buf(),
             last_sequence,
             last_hash,
             poisoned: false,
@@ -182,8 +184,13 @@ impl AuditLog {
 
     pub fn verify_chain(path: &Path) -> Result<AuditChainStatus, AuditError> {
         let file = File::open(path).map_err(map_io)?;
-        lock_shared(&file)?;
+        lock_shared_waiting(&file)?;
         verify(file)
+    }
+
+    /// The path this log was opened with, as supplied by the caller.
+    pub fn path(&self) -> &Path {
+        &self.path
     }
 }
 
