@@ -12,5 +12,5 @@ Description: Linux-native digital forensics acquisition workbench
  GPT partition tables, browses supported filesystems through The Sleuth Kit, and
  records case metadata and audit events.
  .
- This is a Phase 7 development package. The project license is undecided and the
- parser worker isolation release blocker remains open.
+ This is a Phase 8 development package. The native dependency pinning and
+ clean-system release gates remain open.

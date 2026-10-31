@@ -30,6 +30,12 @@ ofi_stage_release() {
     install -Dm644 "$ofi_repo_root/packaging/debian/changelog" \
         "$doc_dir/changelog"
     gzip -9n -f "$doc_dir/changelog"
+
+    # A GPL build must ship the license and third-party notices with every
+    # artifact that this helper stages.
+    install -Dm644 "$ofi_repo_root/LICENSE" "$doc_dir/copyright"
+    install -Dm644 "$ofi_repo_root/packaging/common/THIRD_PARTY.md" \
+        "$doc_dir/THIRD_PARTY.md"
 }
 
 ofi_skip_bundled_library() {

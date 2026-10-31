@@ -135,7 +135,7 @@ jq -n \
                 "bom-ref": ("pkg:cargo/openforensic-imager@" + $version),
                 name: "openforensic-imager",
                 version: $version,
-                licenses: [{expression: "LicenseRef-Undecided"}]
+                licenses: [{expression: "GPL-3.0-or-later"}]
             }
         },
         components: (

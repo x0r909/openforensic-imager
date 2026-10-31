@@ -8,7 +8,8 @@ Phase 0 is complete. Phase 1 core, Phase 2 acquisition/verification, Phase 3
 partition/filesystem analysis, Phase 4 viewer/extraction, and Phase 5 desktop
 workflows are implemented. Phase 6 has executable security, differential, audit,
 fuzz, race, and capacity evidence. Phase 7 has DEB, AppImage, and analysis-only
-Flatpak builds with local installation, content, and reproducibility tests:
+Flatpak builds with local installation, content, and reproducibility tests.
+Phase 8 moves every evidence-facing job into a sandboxed parser worker:
 
 - Rust workspace and domain primitives.
 - Streaming MD5, SHA-1, SHA-256, and SHA-512 hashing.
@@ -49,6 +50,10 @@ Flatpak builds with local installation, content, and reproducibility tests:
 - Desktop case and evidence writes use an adjacent `audit.jsonl` in the case
   database directory.
 - Landlock and seccomp negative tests for a reusable analysis-worker sandbox.
+- A bounded `ofi-parser-worker` process for image, partition, filesystem,
+  acquisition, verification, preview, signature, and extraction jobs.
+- Worker rlimits, Landlock grants, seccomp thread synchronization, response
+  bounds, timeout enforcement, crash containment, and cancellation tests.
 - Side-effect-free C ABI JSON and viewer fuzz targets plus stable property tests.
 - MBR, GPT, ext4, RAW/E01, and SHA-256 differential checks.
 - Source-open syscall tracing that proves the acquisition path uses read-only
@@ -80,8 +85,9 @@ The verified Phase 1 through Phase 6 results are documented in
 [docs/testing/phase3-results.md](docs/testing/phase3-results.md), plus
 [docs/testing/phase4-results.md](docs/testing/phase4-results.md),
 [docs/testing/phase5-ui-results.md](docs/testing/phase5-ui-results.md),
-[docs/testing/phase6-results.md](docs/testing/phase6-results.md), and
-[docs/testing/phase7-results.md](docs/testing/phase7-results.md). The detailed
+[docs/testing/phase6-results.md](docs/testing/phase6-results.md),
+[docs/testing/phase7-results.md](docs/testing/phase7-results.md), and
+[docs/testing/phase8-results.md](docs/testing/phase8-results.md). The detailed
 feasibility findings are in [FEASIBILITY_REPORT.md](FEASIBILITY_REPORT.md) and
 [docs/reverse-engineering/](docs/reverse-engineering/).
 
@@ -148,14 +154,14 @@ investigation input only. It must not be committed or redistributed.
 
 ## Implementation gate
 
-Phases 1 through 7 are implemented at the local development level. The
-production release gate is not yet passed. The analysis worker sandbox exists as
-a tested crate and is not yet wired into the desktop parser dispatch path.
-Sanitizer and scheduled fuzz runs also remain open. Packaging artifacts are
-locally tested, but clean-VM, secondary-distribution, lintian, and physical
-device package tests have not run. The DEB and AppImage currently resolve host
-TSK and libewf versions instead of the pinned release build described in the
-architecture.
+Phases 1 through 8 are implemented at the local development level. The
+production release gate is not yet passed. Every evidence-facing C ABI job now
+runs through `ofi-parser-worker`; case database and audit operations remain in
+the trusted process. Sanitizer and scheduled fuzz runs remain open. Packaging
+artifacts are locally tested, but clean-VM, secondary-distribution, lintian,
+and physical-device package tests have not run. The DEB and AppImage currently
+resolve host TSK and libewf versions instead of the pinned release build
+described in the architecture.
 
 ## Documentation map
 
@@ -186,12 +192,16 @@ architecture.
   evidence.
 - [docs/testing/phase7-results.md](docs/testing/phase7-results.md): Phase 7
   artifact, installation, SBOM, and reproducibility evidence.
+- [docs/testing/phase8-results.md](docs/testing/phase8-results.md): Phase 8
+  parser-worker isolation, crash, cancellation, timeout, and package evidence.
 - [docs/packaging/INSTALL.md](docs/packaging/INSTALL.md): installation,
   removal, Flatpak limits, and non-destructive case recovery.
 - [docs/packaging/REPRODUCIBLE_BUILD.md](docs/packaging/REPRODUCIBLE_BUILD.md):
   dependency set, fixed timestamp, build commands, and reproducibility scope.
 - [docs/security/phase6-review.md](docs/security/phase6-review.md): Phase 6
   security findings, open release blockers, and residual risks.
+- [docs/security/phase8-review.md](docs/security/phase8-review.md): parser-worker
+  boundary review, resolved finding, and residual risks.
 - [SECURITY_MODEL.md](SECURITY_MODEL.md): threat model and mandatory controls.
 - [docs/reverse-engineering/](docs/reverse-engineering/): FTK Imager evidence,
   limitations, and compatibility status.
@@ -200,5 +210,17 @@ architecture.
 - [docs/specifications/interfaces.md](docs/specifications/interfaces.md): initial
   ABI, worker, hash, timestamp, and audit contracts.
 - [docs/testing/fixtures.md](docs/testing/fixtures.md): synthetic fixture policy.
+
+## License
+
+OpenForensic Imager is free software, licensed under the **GNU General Public
+License, version 3 or later** (`GPL-3.0-or-later`). See [LICENSE](LICENSE) for
+the full text.
+
+Forensic tools are licensed this way on purpose: an examiner should be able to
+audit the exact code that produced their evidence, and every recipient of a
+binary keeps the right to do the same. Third-party components and their license
+terms are listed in
+[packaging/common/THIRD_PARTY.md](packaging/common/THIRD_PARTY.md).
 
 # openforensic-imager

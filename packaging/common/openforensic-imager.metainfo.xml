@@ -2,7 +2,7 @@
 <component type="desktop-application">
   <id>io.github.x0r909.OpenForensicImager</id>
   <metadata_license>CC0-1.0</metadata_license>
-  <project_license>LicenseRef-Undecided</project_license>
+  <project_license>GPL-3.0-or-later</project_license>
   <name>OpenForensic Imager</name>
   <summary>Linux forensic acquisition and evidence review workbench</summary>
   <developer id="io.github.x0r909">

@@ -48,3 +48,6 @@ qrc_*.cpp
 .vscode/
 .DS_Store
 
+
+# Local codebase-memory MCP index (generated, not source)
+.codebase-memory/

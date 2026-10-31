@@ -1,8 +1,9 @@
 # Third-Party Components and Notices
 
-Status: Phase 7 development package. The OpenForensic Imager project license is
-still undecided. Do not redistribute these packages until the project owner
-selects a license and the native dependency review is complete.
+Status: Phase 8 development package. OpenForensic Imager is licensed under the
+GNU General Public License version 3 or later (`GPL-3.0-or-later`); see
+[`LICENSE`](../../LICENSE). The native dependency pinning and clean-system
+release gates remain open, so these packages are still development builds.
 
 ## Primary native dependencies
 
@@ -30,8 +31,12 @@ forensic libraries listed above.
 
 The generated CycloneDX SBOM contains every Cargo workspace package and resolved
 dependency with its declared license expression. `Cargo.lock` is the
-authoritative crate version set. The project has not selected a license, so
-this document cannot grant rights to OpenForensic Imager source or binaries.
+authoritative crate version set.
+
+OpenForensic Imager is licensed `GPL-3.0-or-later`. That is compatible with
+every dependency listed above without additional relinking obligations: Qt 6 is
+used under its GPL option rather than LGPL, and libewf's LGPL-3.0 terms are
+satisfied by the project's own GPL-3.0-or-later grant.
 
 ## Packaging tools
 
