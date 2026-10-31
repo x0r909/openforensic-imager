@@ -68,6 +68,18 @@ impl JobOutcome {
             message: Some(message.into()),
         }
     }
+
+    pub fn is_partial(&self) -> bool {
+        self.partial
+    }
+
+    pub fn result(&self) -> &Value {
+        &self.result
+    }
+
+    pub fn message(&self) -> Option<&str> {
+        self.message.as_deref()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -75,6 +87,7 @@ pub struct JobError {
     kind: JobErrorKind,
     code: String,
     message: String,
+    result: Option<Value>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -89,6 +102,7 @@ impl JobError {
             kind: JobErrorKind::Failed,
             code: code.into(),
             message: message.into(),
+            result: None,
         }
     }
 
@@ -97,7 +111,27 @@ impl JobError {
             kind: JobErrorKind::Cancelled,
             code: "cancelled".to_owned(),
             message: message.into(),
+            result: None,
         }
+    }
+
+    /// A cancelled job that still has retained output worth reporting.
+    ///
+    /// ACQ-011 requires a cancelled acquisition to retain its partial artifacts,
+    /// so the staged path travels with the cancellation instead of being
+    /// discarded when the job status becomes `cancelled`.
+    pub fn cancelled_with_result(result: Value, message: impl Into<String>) -> Self {
+        Self {
+            kind: JobErrorKind::Cancelled,
+            code: "cancelled".to_owned(),
+            message: message.into(),
+            result: Some(result),
+        }
+    }
+
+    /// Returns the payload that survived a cancellation, if any.
+    pub fn result(&self) -> Option<&Value> {
+        self.result.as_ref()
     }
 
     pub fn code(&self) -> &str {
@@ -330,7 +364,9 @@ where
             } else {
                 JobStatus::Failed
             };
-            (status, Some(error.message), Some(error.code), None)
+            // A cancelled job may still carry retained artifacts (ACQ-011), so
+            // the payload is preserved rather than dropped with the error.
+            (status, Some(error.message), Some(error.code), error.result)
         }
         Err(_) => (
             JobStatus::Failed,

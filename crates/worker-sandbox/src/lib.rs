@@ -24,6 +24,8 @@ const LANDLOCK_ACCESS_FS_TRUNCATE: u64 = 1 << 14;
 const LANDLOCK_ACCESS_FS_IOCTL_DEV: u64 = 1 << 15;
 
 const PR_SET_NO_NEW_PRIVS: libc::c_int = 38;
+const SECCOMP_SET_MODE_FILTER: libc::c_uint = 1;
+const SECCOMP_FILTER_FLAG_TSYNC: libc::c_ulong = 1;
 const AUDIT_ARCH_X86_64: u32 = 0xC000_003E;
 const BPF_LD: u16 = 0x00;
 const BPF_W: u16 = 0x00;
@@ -66,6 +68,14 @@ const DENIED_SYSCALLS: &[libc::c_long] = &[
 pub struct SandboxPolicy {
     pub read_paths: Vec<PathBuf>,
     pub write_paths: Vec<PathBuf>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ResourceLimits {
+    pub address_space_bytes: u64,
+    pub cpu_seconds: u64,
+    pub open_files: u64,
+    pub file_size_bytes: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -129,6 +139,61 @@ impl SandboxPolicy {
     }
 }
 
+impl ResourceLimits {
+    pub fn parser_default() -> Self {
+        Self {
+            address_space_bytes: 4 * 1024 * 1024 * 1024,
+            cpu_seconds: 60 * 60,
+            open_files: 256,
+            // Matches `MAX_RESPONSE_BYTES` in native-bindings: the worker cannot
+            // emit a response larger than the parent will ever accept, so the
+            // response cap is enforced from both sides.
+            file_size_bytes: 64 * 1024 * 1024,
+        }
+    }
+
+    pub fn validate(&self) -> Result<(), SandboxError> {
+        if self.address_space_bytes == 0
+            || self.cpu_seconds == 0
+            || self.open_files == 0
+            || self.file_size_bytes == 0
+        {
+            return Err(SandboxError::new("resource limits must all be non-zero"));
+        }
+        Ok(())
+    }
+}
+
+pub fn apply_resource_limits(limits: &ResourceLimits) -> Result<(), SandboxError> {
+    limits.validate()?;
+    set_limit(libc::RLIMIT_CORE, 0, 0, "RLIMIT_CORE")?;
+    set_limit(
+        libc::RLIMIT_AS,
+        limits.address_space_bytes,
+        limits.address_space_bytes,
+        "RLIMIT_AS",
+    )?;
+    set_limit(
+        libc::RLIMIT_CPU,
+        limits.cpu_seconds,
+        limits.cpu_seconds,
+        "RLIMIT_CPU",
+    )?;
+    set_limit(
+        libc::RLIMIT_NOFILE,
+        limits.open_files,
+        limits.open_files,
+        "RLIMIT_NOFILE",
+    )?;
+    set_limit(
+        libc::RLIMIT_FSIZE,
+        limits.file_size_bytes,
+        limits.file_size_bytes,
+        "RLIMIT_FSIZE",
+    )?;
+    Ok(())
+}
+
 pub fn landlock_abi_version() -> Result<i64, SandboxError> {
     let result = unsafe {
         libc::syscall(
@@ -171,6 +236,9 @@ pub fn apply_landlock(policy: &SandboxPolicy) -> Result<(), SandboxError> {
         | LANDLOCK_ACCESS_FS_MAKE_DIR
         | LANDLOCK_ACCESS_FS_REMOVE_FILE
         | LANDLOCK_ACCESS_FS_REMOVE_DIR;
+    if abi >= 2 {
+        write_access |= LANDLOCK_ACCESS_FS_REFER;
+    }
     if abi >= 3 {
         write_access |= LANDLOCK_ACCESS_FS_TRUNCATE;
     }
@@ -216,21 +284,48 @@ pub fn apply_seccomp_restrictions() -> Result<(), SandboxError> {
         return Err(last_error("prctl(PR_SET_NO_NEW_PRIVS) failed"));
     }
     let result = unsafe {
-        libc::prctl(
-            libc::PR_SET_SECCOMP,
-            libc::SECCOMP_MODE_FILTER,
+        libc::syscall(
+            libc::SYS_seccomp,
+            SECCOMP_SET_MODE_FILTER,
+            SECCOMP_FILTER_FLAG_TSYNC,
             &mut program as *mut libc::sock_fprog,
-            0,
-            0,
         )
     };
-    if result != 0 {
+    if result < 0 {
         return Err(last_error("seccomp filter installation failed"));
     }
     Ok(())
 }
 
+fn set_limit(
+    resource: libc::__rlimit_resource_t,
+    soft: u64,
+    hard: u64,
+    name: &str,
+) -> Result<(), SandboxError> {
+    let limit = libc::rlimit {
+        rlim_cur: soft as libc::rlim_t,
+        rlim_max: hard as libc::rlim_t,
+    };
+    if unsafe { libc::setrlimit(resource, &limit) } != 0 {
+        return Err(last_error(&format!("setrlimit({name}) failed")));
+    }
+    Ok(())
+}
+
 fn add_path_rule(ruleset: &OwnedFd, path: &Path, allowed_access: u64) -> Result<(), SandboxError> {
+    let metadata = std::fs::metadata(path)
+        .map_err(|error| SandboxError::new(format!("unable to inspect sandbox path: {error}")))?;
+    let allowed_access = if metadata.is_dir() {
+        allowed_access
+    } else {
+        allowed_access
+            & (LANDLOCK_ACCESS_FS_EXECUTE
+                | LANDLOCK_ACCESS_FS_WRITE_FILE
+                | LANDLOCK_ACCESS_FS_READ_FILE
+                | LANDLOCK_ACCESS_FS_TRUNCATE
+                | LANDLOCK_ACCESS_FS_IOCTL_DEV)
+    };
     let path = CString::new(path.as_os_str().as_bytes())
         .map_err(|_| SandboxError::new("sandbox path contains a NUL byte"))?;
     let fd = unsafe {

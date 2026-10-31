@@ -21,6 +21,8 @@ job-manager = { path = "../job-manager" }
 partition-analyzer = { path = "../partition-analyzer" }
 reporting = { path = "../reporting" }
 viewer = { path = "../viewer" }
+worker-sandbox = { path = "../worker-sandbox" }
+libc.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 

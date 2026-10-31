@@ -1,5 +1,6 @@
 use worker_sandbox::{
-    SandboxPolicy, apply_landlock, apply_seccomp_restrictions, landlock_abi_version,
+    ResourceLimits, SandboxPolicy, apply_landlock, apply_resource_limits,
+    apply_seccomp_restrictions, landlock_abi_version,
 };
 
 #[test]
@@ -54,6 +55,47 @@ fn sandboxed_child_cannot_read_outside_allowlist_or_open_network() {
         .status()
         .unwrap();
     assert!(status.success());
+}
+
+#[test]
+fn resource_limits_are_applied_before_parsing() {
+    let status = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "resource_limit_child",
+            "--nocapture",
+            "--test-threads=1",
+        ])
+        .env("OFI_RESOURCE_LIMIT_CHILD", "1")
+        .status()
+        .unwrap();
+    assert!(status.success());
+}
+
+#[test]
+fn resource_limit_child() {
+    if std::env::var_os("OFI_RESOURCE_LIMIT_CHILD").is_none() {
+        return;
+    }
+    let limits = ResourceLimits::parser_default();
+    apply_resource_limits(&limits).unwrap();
+
+    let mut core = libc::rlimit {
+        rlim_cur: 1,
+        rlim_max: 1,
+    };
+    assert_eq!(unsafe { libc::getrlimit(libc::RLIMIT_CORE, &mut core) }, 0);
+    assert_eq!(core.rlim_cur, 0);
+
+    let mut files = libc::rlimit {
+        rlim_cur: 0,
+        rlim_max: 0,
+    };
+    assert_eq!(
+        unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut files) },
+        0
+    );
+    assert_eq!(files.rlim_cur, limits.open_files);
 }
 
 #[test]

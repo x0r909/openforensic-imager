@@ -10,7 +10,9 @@ use native_bindings::{
     ofi_job_manager_free, ofi_job_manager_new, ofi_job_snapshot, ofi_job_submit, ofi_status,
     validate_job_request,
 };
+use forensic_core::CaseId;
 use proptest::prelude::*;
+use std::os::unix::fs::DirBuilderExt;
 use tempfile::tempdir;
 
 unsafe fn error_code(error: *mut ofi_error) -> String {
@@ -24,7 +26,7 @@ unsafe fn error_code(error: *mut ofi_error) -> String {
 #[test]
 fn abi_version_is_one() {
     assert_eq!(ofi_abi_version(), 1);
-    assert_eq!(ofi_abi_version_minor(), 1);
+    assert_eq!(ofi_abi_version_minor(), 2);
 }
 
 #[test]
@@ -165,11 +167,253 @@ fn case_and_evidence_requests_return_owned_json() {
     let response_json: serde_json::Value = serde_json::from_slice(response_bytes).unwrap();
     assert_eq!(response_json["body"]["id"], evidence_id);
     unsafe { ofi_bytes_free(response, response_len) };
+
+    // Omitting audit_path must still record the event, beside the case database.
+    let audit = std::fs::read_to_string(directory.path().join("audit.jsonl"))
+        .expect("case and evidence writes must always produce an audit record");
+    assert!(audit.contains("case.created"), "missing case.created in {audit}");
+    assert!(audit.contains("evidence.added"), "missing evidence.added in {audit}");
+}
+
+#[test]
+fn omitted_audit_path_still_audits_beside_the_database() {
+    let directory = tempdir().unwrap();
+    let path = directory.path().join("case").join("case.db");
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let case_id = "00000000-0000-0000-0000-00000000003a";
+    let request = format!(
+        r#"{{"db_path":"{}","id":"{case_id}","title":"No Path Case","examiner":"Examiner"}}"#,
+        path.display()
+    );
+    let mut response = ptr::null_mut();
+    let mut response_len = 0;
+    let mut error = ptr::null_mut();
+    let status = unsafe {
+        ofi_case_create(
+            request.as_ptr(),
+            request.len(),
+            &mut response,
+            &mut response_len,
+            &mut error,
+        )
+    };
+    assert_eq!(status, ofi_status::OFI_STATUS_OK);
+    unsafe { ofi_bytes_free(response, response_len) };
+
+    let audit = path.parent().unwrap().join("audit.jsonl");
+    let contents = std::fs::read_to_string(&audit)
+        .unwrap_or_else(|_| panic!("no audit log at {}", audit.display()));
+    assert!(
+        contents.contains("case.created"),
+        "a case committed without its audit record: {contents}"
+    );
+}
+
+#[test]
+fn audit_operations_are_bound_to_the_case() {
+    let directory = tempdir().unwrap();
+    let case_a_db = directory.path().join("a").join("case.db");
+    let case_b_db = directory.path().join("b").join("case.db");
+    std::fs::create_dir_all(case_a_db.parent().unwrap()).unwrap();
+    std::fs::create_dir_all(case_b_db.parent().unwrap()).unwrap();
+
+    let id_a = "00000000-0000-0000-0000-0000000000a1";
+    let id_b = "00000000-0000-0000-0000-0000000000b1";
+    for (db, id, title) in [
+        (&case_a_db, id_a, "Case A"),
+        (&case_b_db, id_b, "Case B"),
+    ] {
+        let request = format!(
+            r#"{{"db_path":"{}","id":"{id}","title":"{title}","examiner":"Examiner"}}"#,
+            db.display()
+        );
+        let mut response = ptr::null_mut();
+        let mut response_len = 0;
+        let mut error = ptr::null_mut();
+        let status = unsafe {
+            ofi_case_create(
+                request.as_ptr(),
+                request.len(),
+                &mut response,
+                &mut response_len,
+                &mut error,
+            )
+        };
+        assert_eq!(status, ofi_status::OFI_STATUS_OK, "case creation failed");
+        unsafe { ofi_bytes_free(response, response_len) };
+    }
+
+    let log_a = directory.path().join("a").join("audit.jsonl");
+    let log_b = directory.path().join("b").join("audit.jsonl");
+    assert!(log_a.exists() && log_b.exists());
+
+    // Each case is bound to its own log.
+    let store_a = evidence_manager::CaseStore::open(&case_a_db).unwrap();
+    let store_b = evidence_manager::CaseStore::open(&case_b_db).unwrap();
+    let bound_a = store_a.case_audit_path(id_a.parse::<CaseId>().unwrap()).unwrap();
+    let bound_b = store_b.case_audit_path(id_b.parse::<CaseId>().unwrap()).unwrap();
+    assert_eq!(bound_a.as_deref(), Some(log_a.as_path()));
+    assert_eq!(bound_b.as_deref(), Some(log_b.as_path()));
+
+    // Appending case A's event into case B's log must be rejected.
+    let mut manager: *mut ofi_job_manager = ptr::null_mut();
+    let mut error = ptr::null_mut();
+    assert_eq!(
+        unsafe { ofi_job_manager_new(1, &mut manager, &mut error) },
+        ofi_status::OFI_STATUS_OK
+    );
+    let request = serde_json::json!({
+        "operation": "audit_append",
+        "audit_path": log_b,
+        "case_id": id_a,
+        "actor": "examiner",
+        "action": "evidence.opened",
+        "subject_id": serde_json::Value::Null,
+        "details": {},
+        "db_path": case_a_db,
+    });
+    let job_id = unsafe { submit_job(manager, &request) }.unwrap();
+    let snapshot = unsafe { wait_for_snapshot(manager, &job_id) };
+    assert_eq!(snapshot["body"]["status"], "failed");
+    assert_eq!(snapshot["body"]["error_code"], "audit.case");
+
+    // The cross-case write must not have landed in case B's history.
+    let contents = std::fs::read_to_string(&log_b).unwrap();
+    assert!(
+        !contents.contains("evidence.opened"),
+        "case A's event was written into case B's log"
+    );
+
+    // Verifying case B's log while claiming case A is also rejected.
+    let request = serde_json::json!({
+        "operation": "audit_verify",
+        "audit_path": log_b,
+        "db_path": case_a_db,
+        "case_id": id_a,
+    });
+    let job_id = unsafe { submit_job(manager, &request) }.unwrap();
+    let snapshot = unsafe { wait_for_snapshot(manager, &job_id) };
+    assert_eq!(snapshot["body"]["status"], "failed");
+    assert_eq!(snapshot["body"]["error_code"], "audit.case");
+
+    // The honest pair still works.
+    let request = serde_json::json!({
+        "operation": "audit_verify",
+        "audit_path": log_b,
+        "db_path": case_b_db,
+        "case_id": id_b,
+    });
+    let job_id = unsafe { submit_job(manager, &request) }.unwrap();
+    let snapshot = unsafe { wait_for_snapshot(manager, &job_id) };
+    assert_eq!(snapshot["body"]["status"], "succeeded");
+    assert_eq!(snapshot["body"]["result"]["valid"], true);
+
+    unsafe { ofi_job_manager_free(manager) };
+}
+
+#[test]
+fn case_create_with_unopenable_audit_path_refuses_to_commit() {
+    let directory = tempdir().unwrap();
+    let path = directory.path().join("refused.db");
+    let case_id = "00000000-0000-0000-0000-00000000003b";
+    // A directory can never be opened as the audit log, so the preflight fails.
+    let blocked = directory.path().join("audit-is-a-directory");
+    std::fs::create_dir(&blocked).unwrap();
+    let request = format!(
+        r#"{{"db_path":"{}","id":"{case_id}","title":"Refused","examiner":"Examiner","audit_path":"{}"}}"#,
+        path.display(),
+        blocked.display()
+    );
+    let mut response = ptr::null_mut();
+    let mut response_len = 0;
+    let mut error = ptr::null_mut();
+    let status = unsafe {
+        ofi_case_create(
+            request.as_ptr(),
+            request.len(),
+            &mut response,
+            &mut response_len,
+            &mut error,
+        )
+    };
+    assert_ne!(status, ofi_status::OFI_STATUS_OK);
+    let code = unsafe { error_code(error) };
+    assert_eq!(code, "audit.open", "unexpected error code {code}");
+
+    // The preflight must run before the commit, so the case row may not exist.
+    if let Ok(store) = evidence_manager::CaseStore::open(&path) {
+        let existing = store
+            .list_evidence(case_id.parse::<CaseId>().unwrap())
+            .expect("evidence list");
+        assert!(
+            existing.is_empty(),
+            "a case must not commit when its audit log cannot open"
+        );
+    }
 }
 
 unsafe fn response_json(response: *mut u8, response_len: usize) -> serde_json::Value {
     let bytes = unsafe { std::slice::from_raw_parts(response, response_len) };
     serde_json::from_slice(bytes).unwrap()
+}
+
+/// Submits a job request and returns its job id.
+unsafe fn submit_job(
+    manager: *mut ofi_job_manager,
+    request: &serde_json::Value,
+) -> Result<String, String> {
+    let request = serde_json::to_vec(request).unwrap();
+    let mut response = ptr::null_mut();
+    let mut response_len = 0;
+    let mut error = ptr::null_mut();
+    let status = unsafe {
+        ofi_job_submit(
+            manager,
+            request.as_ptr(),
+            request.len(),
+            &mut response,
+            &mut response_len,
+            &mut error,
+        )
+    };
+    if status != ofi_status::OFI_STATUS_OK {
+        unsafe { ofi_error_free(error) };
+        return Err(format!("submit failed: {status:?}"));
+    }
+    let value = unsafe { response_json(response, response_len) };
+    unsafe { ofi_bytes_free(response, response_len) };
+    Ok(value["body"]["job_id"].as_str().unwrap().to_owned())
+}
+
+/// Polls until the job reaches a terminal status.
+unsafe fn wait_for_snapshot(manager: *mut ofi_job_manager, job_id: &str) -> serde_json::Value {
+    let job_id = CString::new(job_id).unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let mut response = ptr::null_mut();
+        let mut response_len = 0;
+        let mut error = ptr::null_mut();
+        let status = unsafe {
+            ofi_job_snapshot(
+                manager,
+                job_id.as_ptr(),
+                &mut response,
+                &mut response_len,
+                &mut error,
+            )
+        };
+        assert_eq!(status, ofi_status::OFI_STATUS_OK);
+        let snapshot = unsafe { response_json(response, response_len) };
+        unsafe { ofi_bytes_free(response, response_len) };
+        if matches!(
+            snapshot["body"]["status"].as_str(),
+            Some("succeeded" | "partial" | "failed" | "cancelled")
+        ) {
+            return snapshot;
+        }
+        assert!(Instant::now() < deadline, "job did not finish");
+        std::thread::sleep(Duration::from_millis(10));
+    }
 }
 
 #[test]
@@ -498,7 +742,7 @@ fn preview_and_extraction_jobs_return_bounded_results() {
         )
     };
     let extraction = unsafe { wait_for_job(manager, &extract_id) };
-    assert_eq!(extraction["body"]["status"], "succeeded");
+    assert_eq!(extraction["body"]["status"], "succeeded", "{extraction}");
     assert_eq!(
         std::fs::read(destination.join("hello.txt")).unwrap(),
         b"hello from phase five\n"
@@ -543,7 +787,11 @@ fn directory_extraction_job_writes_reports() {
     );
     let export_root = directory.path().join("export");
     let reports_root = directory.path().join("reports");
-    std::fs::create_dir(&reports_root).unwrap();
+    // Owner-only: the worker refuses an output directory another principal can write.
+    std::fs::DirBuilder::new()
+        .mode(0o700)
+        .create(&reports_root)
+        .unwrap();
 
     let id = unsafe {
         submit_request(
@@ -562,7 +810,7 @@ fn directory_extraction_job_writes_reports() {
     };
     let snapshot = unsafe { wait_for_job(manager, &id) };
 
-    assert_eq!(snapshot["body"]["status"], "succeeded");
+    assert_eq!(snapshot["body"]["status"], "succeeded", "{snapshot}");
     assert_eq!(snapshot["body"]["result"]["manifest"]["status"], "complete");
     assert_eq!(
         snapshot["body"]["result"]["manifest"]["records"]
@@ -605,7 +853,10 @@ fn acquisition_job_writes_reports_and_verification_job_verifies_output() {
     let destination = directory.path().join("acquired");
     std::fs::create_dir(&destination).unwrap();
     let reports = directory.path().join("reports");
-    std::fs::create_dir(&reports).unwrap();
+    std::fs::DirBuilder::new()
+        .mode(0o700)
+        .create(&reports)
+        .unwrap();
     let mut manager: *mut ofi_job_manager = ptr::null_mut();
     let mut error = ptr::null_mut();
     assert_eq!(
@@ -633,12 +884,17 @@ fn acquisition_job_writes_reports_and_verification_job_verifies_output() {
         )
     };
     let acquired = unsafe { wait_for_job(manager, &id) };
-    assert_eq!(acquired["body"]["status"], "succeeded");
+    assert_eq!(acquired["body"]["status"], "succeeded", "{acquired}");
     assert!(reports.join("phase5.acquisition.json").exists());
     assert!(reports.join("phase5.acquisition.csv").exists());
     assert!(reports.join("phase5.acquisition.html").exists());
     let image = destination.join("evidence.raw");
-    let expected = acquired["body"]["result"]["manifest"]["artifacts"][0]["sha256"]
+    let expected = acquired["body"]["result"]["manifest"]["hashes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|hash| hash["scope"] == "output_logical" && hash["algorithm"] == "sha256")
+        .unwrap()["digest_hex"]
         .as_str()
         .unwrap()
         .to_owned();
@@ -669,6 +925,72 @@ fn acquisition_job_writes_reports_and_verification_job_verifies_output() {
     assert!(reports.join("phase5.verification.json").exists());
     assert!(reports.join("phase5.verification.csv").exists());
     assert!(reports.join("phase5.verification.html").exists());
+    unsafe { ofi_job_manager_free(manager) };
+}
+
+#[test]
+fn ewf_acquisition_and_verification_run_through_the_parser_worker() {
+    let directory = tempdir().unwrap();
+    let source = directory.path().join("source.raw");
+    std::fs::write(&source, vec![0x43_u8; 128 * 1024]).unwrap();
+    let destination = directory.path().join("acquired");
+    std::fs::create_dir(&destination).unwrap();
+    let mut manager: *mut ofi_job_manager = ptr::null_mut();
+    let mut error = ptr::null_mut();
+    assert_eq!(
+        unsafe { ofi_job_manager_new(1, &mut manager, &mut error) },
+        ofi_status::OFI_STATUS_OK
+    );
+    let id = unsafe {
+        submit_request(
+            manager,
+            &serde_json::json!({
+                "operation": "acquisition",
+                "source_path": source,
+                "destination_dir": destination,
+                "base_name": "evidence",
+                "format": "ewf1_e01",
+                "options": {
+                    "block_size": 4096,
+                    "maximum_segment_size": 1048576,
+                    "compression": "none",
+                    "verify_after": true
+                }
+            }),
+        )
+    };
+    let acquired = unsafe { wait_for_job(manager, &id) };
+    assert_eq!(acquired["body"]["status"], "succeeded", "{acquired}");
+    assert_eq!(acquired["body"]["result"]["manifest"]["format"], "ewf1_e01");
+    let image = destination.join("evidence.E01");
+    assert!(image.is_file());
+    let expected = acquired["body"]["result"]["manifest"]["hashes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|hash| hash["scope"] == "output_logical" && hash["algorithm"] == "sha256")
+        .unwrap()["digest_hex"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    let id = unsafe {
+        submit_request(
+            manager,
+            &serde_json::json!({
+                "operation": "verification",
+                "path": image,
+                "algorithms": ["sha256"],
+                "expected": {"sha256": expected}
+            }),
+        )
+    };
+    let verified = unsafe { wait_for_job(manager, &id) };
+    assert_eq!(verified["body"]["status"], "succeeded", "{verified}");
+    assert_eq!(
+        verified["body"]["result"]["report"]["outcomes"]["sha256"],
+        "match"
+    );
     unsafe { ofi_job_manager_free(manager) };
 }
 
@@ -800,18 +1122,16 @@ fn case_and_evidence_writes_append_to_the_audit_chain() {
         "audit_path": audit,
     }))
     .unwrap();
-    assert_eq!(
-        unsafe {
-            ofi_evidence_add(
-                request.as_ptr(),
-                request.len(),
-                &mut response,
-                &mut response_len,
-                &mut error,
-            )
-        },
-        ofi_status::OFI_STATUS_OK
-    );
+    let evidence_status = unsafe {
+        ofi_evidence_add(
+            request.as_ptr(),
+            request.len(),
+            &mut response,
+            &mut response_len,
+            &mut error,
+        )
+    };
+    assert_eq!(evidence_status, ofi_status::OFI_STATUS_OK);
     unsafe { ofi_bytes_free(response, response_len) };
 
     let mut manager: *mut ofi_job_manager = ptr::null_mut();
@@ -827,9 +1147,12 @@ fn case_and_evidence_writes_append_to_the_audit_chain() {
     };
     let verified = unsafe { wait_for_job(manager, &id) };
 
-    assert_eq!(verified["body"]["status"], "succeeded");
-    assert_eq!(verified["body"]["result"]["valid"], true);
-    assert_eq!(verified["body"]["result"]["record_count"], 2);
+    assert_eq!(
+        verified["body"]["status"], "succeeded",
+        "audit_verify failed: {verified}"
+    );
+    assert_eq!(verified["body"]["result"]["valid"], true, "{verified}");
+    assert_eq!(verified["body"]["result"]["record_count"], 2, "{verified}");
     assert!(verified["body"]["result"]["head_hash"].is_string());
     unsafe { ofi_job_manager_free(manager) };
 }
@@ -889,4 +1212,175 @@ fn audit_open_failure_prevents_case_commit() {
         ofi_status::OFI_STATUS_OK
     );
     unsafe { ofi_bytes_free(response, response_len) };
+}
+
+/// P6-SEC-002: a committed case must never be lost from the audit history.
+///
+/// The audit append can fail after the database commit (a full or failing
+/// device). The event must stay queued and be replayed into the chain by the
+/// next audited operation, so the case is never silently unlogged.
+#[test]
+fn audit_append_failure_is_recovered_from_the_durable_outbox() {
+    let directory = tempdir().unwrap();
+    let database = directory.path().join("case.db");
+    let audit = directory.path().join("audit.jsonl");
+    let case_id = "00000000-0000-0000-0000-000000000060";
+    let evidence_id = "00000000-0000-0000-0000-000000000061";
+
+    // /dev/full opens successfully and fails only on write, so the preflight
+    // passes and the failure lands after the case row is committed.
+    let request = serde_json::to_vec(&serde_json::json!({
+        "db_path": database,
+        "id": case_id,
+        "title": "Committed but unlogged",
+        "examiner": "Examiner",
+        "audit_path": "/dev/full",
+    }))
+    .unwrap();
+    let mut response = ptr::null_mut();
+    let mut response_len = 0;
+    let mut error = ptr::null_mut();
+    let status = unsafe {
+        ofi_case_create(
+            request.as_ptr(),
+            request.len(),
+            &mut response,
+            &mut response_len,
+            &mut error,
+        )
+    };
+    assert_eq!(status, ofi_status::OFI_STATUS_OPERATION_FAILED);
+    assert_eq!(unsafe { error_code(error) }, "audit.append_after_commit");
+
+    // The case row is committed and the event is durably queued.
+    let store = evidence_manager::CaseStore::open(&database).unwrap();
+    assert_eq!(store.pending_audit_count().unwrap(), 1);
+
+    // A later write to a working log replays the queued event into the chain.
+    // The failed log was never bound, because it could not record anything.
+    let request = serde_json::to_vec(&serde_json::json!({
+        "db_path": database,
+        "id": evidence_id,
+        "case_id": case_id,
+        "description": "disk",
+        "source_path": "/tmp/disk.raw",
+        "source": {
+            "device": 1, "inode": 2, "length": 4096,
+            "mtime_seconds": 10, "mtime_nanoseconds": 3,
+            "ctime_seconds": 20, "ctime_nanoseconds": 4,
+            "read_only": true
+        },
+        "audit_path": audit,
+    }))
+    .unwrap();
+    error = ptr::null_mut();
+    assert_eq!(
+        unsafe {
+            ofi_evidence_add(
+                request.as_ptr(),
+                request.len(),
+                &mut response,
+                &mut response_len,
+                &mut error,
+            )
+        },
+        ofi_status::OFI_STATUS_OK
+    );
+    unsafe { ofi_bytes_free(response, response_len) };
+
+    let store = evidence_manager::CaseStore::open(&database).unwrap();
+    assert_eq!(
+        store.pending_audit_count().unwrap(),
+        0,
+        "replayed events must be marked appended"
+    );
+
+    let log = std::fs::read_to_string(&audit).unwrap();
+    assert!(
+        log.contains("case.created"),
+        "the committed case was never replayed into the chain: {log}"
+    );
+    assert!(log.contains("evidence.added"), "missing evidence.added: {log}");
+
+    let status = audit_log::AuditLog::verify_chain(&audit).unwrap();
+    assert!(status.is_valid(), "{:?}", status.reason());
+    assert_eq!(status.record_count(), 2);
+}
+
+/// A chain that verifies but sits behind the head recorded for the case has
+/// lost records. Chain-internal checks cannot see that, so the recorded head
+/// must be compared.
+#[test]
+fn audit_verify_detects_a_chain_behind_the_recorded_head() {
+    let directory = tempdir().unwrap();
+    let database = directory.path().join("case.db");
+    let audit = directory.path().join("audit.jsonl");
+    let case_id = "00000000-0000-0000-0000-000000000070";
+
+    let request = serde_json::to_vec(&serde_json::json!({
+        "db_path": database,
+        "id": case_id,
+        "title": "Rollback case",
+        "examiner": "Examiner",
+        "audit_path": audit,
+    }))
+    .unwrap();
+    let mut response = ptr::null_mut();
+    let mut response_len = 0;
+    let mut error = ptr::null_mut();
+    assert_eq!(
+        unsafe {
+            ofi_case_create(
+                request.as_ptr(),
+                request.len(),
+                &mut response,
+                &mut response_len,
+                &mut error,
+            )
+        },
+        ofi_status::OFI_STATUS_OK
+    );
+    unsafe { ofi_bytes_free(response, response_len) };
+
+    let mut manager: *mut ofi_job_manager = ptr::null_mut();
+    assert_eq!(
+        unsafe { ofi_job_manager_new(1, &mut manager, &mut error) },
+        ofi_status::OFI_STATUS_OK
+    );
+
+    // First verification records the head.
+    let id = unsafe {
+        submit_request(
+            manager,
+            &serde_json::json!({
+                "operation": "audit_verify",
+                "audit_path": audit,
+                "db_path": database,
+                "case_id": case_id,
+            }),
+        )
+    };
+    let verified = unsafe { wait_for_job(manager, &id) };
+    assert_eq!(verified["body"]["status"], "succeeded", "{verified}");
+
+    // Roll the chain back to an empty file: it verifies trivially, but it no
+    // longer reaches the head recorded for the case.
+    std::fs::write(&audit, "").unwrap();
+
+    let id = unsafe {
+        submit_request(
+            manager,
+            &serde_json::json!({
+                "operation": "audit_verify",
+                "audit_path": audit,
+                "db_path": database,
+                "case_id": case_id,
+            }),
+        )
+    };
+    let verified = unsafe { wait_for_job(manager, &id) };
+    assert_eq!(verified["body"]["status"], "failed", "{verified}");
+    assert_eq!(verified["body"]["error_code"], "audit.head_mismatch");
+
+    unsafe { ofi_job_manager_free(manager) };
 }

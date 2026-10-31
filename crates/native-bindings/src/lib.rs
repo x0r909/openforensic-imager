@@ -2,33 +2,29 @@ use std::any::Any;
 use std::collections::BTreeMap;
 use std::ffi::{CString, c_char};
 use std::panic::{AssertUnwindSafe, catch_unwind};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::ptr;
 use std::str::FromStr;
 
-use acquisition::{
-    AcquisitionOptions, AcquisitionRequest, AcquisitionStatus, OutputFormat,
-    acquire_path_with_cancel, verify_image,
-};
+use acquisition::{AcquisitionOptions, OutputFormat};
 use audit_log::{AuditEvent, AuditLog};
 use evidence_manager::{AddEvidence, CaseStore, CreateCase, EvidenceRecord, SourceSnapshot};
-use extraction::{ExtractionOptions, Extractor};
-use filesystem::{EvidenceFile, FileSystem};
 use forensic_core::{CaseId, EvidenceId, JobId};
 use hashing::HashAlgorithm;
-use image_reader::open_image;
 use job_manager::{JobError, JobManager, JobOutcome};
-use partition_analyzer::analyze_partitions;
-use reporting::{
-    write_acquisition_report_set, write_extraction_report_set, write_verification_report_set,
-};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use viewer::{ByteSource, SourceError, hex_page, identify_signature, preview_text};
+
+mod parser_worker;
+
+pub use parser_worker::run_stdio_worker;
 
 const ABI_MAJOR: u32 = 1;
-const ABI_MINOR: u32 = 1;
+const ABI_MINOR: u32 = 2;
 const MAX_REQUEST_BYTES: usize = 1024 * 1024;
+
+/// Default audit log name beside a case database, matching the desktop client.
+const CASE_AUDIT_FILE_NAME: &str = "audit.jsonl";
 
 #[allow(non_camel_case_types)]
 #[repr(C)]
@@ -115,9 +111,16 @@ enum JobRequest {
         action: String,
         subject_id: Option<String>,
         details: BTreeMap<String, String>,
+        /// Case database the event is about. When present the audit path must
+        /// resolve to that case's recorded log.
+        db_path: Option<String>,
     },
     AuditVerify {
         audit_path: String,
+        /// Case database to bind the verification to. When present, a chain
+        /// belonging to a different case is rejected instead of reported valid.
+        db_path: Option<String>,
+        case_id: Option<CaseId>,
     },
     HexPreview {
         path: String,
@@ -176,6 +179,24 @@ impl JobRequest {
             Self::ExtractDirectory { .. } => "extract_directory",
         }
     }
+
+    fn is_isolated(&self) -> bool {
+        matches!(
+            self,
+            Self::ImageIdentify { .. }
+                | Self::PartitionAnalysis { .. }
+                | Self::FilesystemList { .. }
+                | Self::FilesystemOpen { .. }
+                | Self::Verification { .. }
+                | Self::Acquisition { .. }
+                | Self::SourceSnapshot { .. }
+                | Self::HexPreview { .. }
+                | Self::TextPreview { .. }
+                | Self::FileSignature { .. }
+                | Self::ExtractFile { .. }
+                | Self::ExtractDirectory { .. }
+        )
+    }
 }
 
 /// Decodes a job request without running its operation.
@@ -207,22 +228,6 @@ struct FfiError {
     status: ofi_status,
     code: &'static str,
     message: String,
-}
-
-struct EvidenceByteSource<'a> {
-    file: EvidenceFile<'a>,
-}
-
-impl ByteSource for EvidenceByteSource<'_> {
-    fn len(&self) -> u64 {
-        self.file.size()
-    }
-
-    fn read_at(&self, offset: u64, buffer: &mut [u8]) -> Result<usize, SourceError> {
-        self.file
-            .read_at(offset, buffer)
-            .map_err(|error| SourceError::new(error.to_string()))
-    }
 }
 
 #[unsafe(no_mangle)]
@@ -653,149 +658,19 @@ unsafe fn job_manager_and_id<'a>(
     Some((manager, job_id))
 }
 
-fn handle_job_submit(manager: &JobManager, request: &[u8]) -> Result<Vec<u8>, FfiError> {
-    let request = parse_job_request(request)?;
-    let job_id = match request {
-        JobRequest::ImageIdentify { path } => manager.submit("image_identify", move |_| {
-            let image = open_image(Path::new(&path))
-                .map_err(|error| JobError::failed("image.open", error.to_string()))?;
-            job_success(image.metadata())
-        }),
-        JobRequest::PartitionAnalysis { path } => manager.submit("partition_analysis", move |_| {
-            let analysis = analyze_partitions(Path::new(&path))
-                .map_err(|error| JobError::failed("partition.failed", error.to_string()))?;
-            job_success(analysis)
-        }),
-        JobRequest::FilesystemList {
-            path,
-            offset_bytes,
-            inode,
-        } => manager.submit("filesystem_list", move |_| {
-            let filesystem = FileSystem::open(Path::new(&path), offset_bytes)
-                .map_err(|error| JobError::failed("filesystem.open", error.to_string()))?;
-            let entries = filesystem
-                .list_directory(inode)
-                .map_err(|error| JobError::failed("filesystem.list", error.to_string()))?;
-            job_success(json!({
-                "kind": filesystem.kind(),
-                "block_size": filesystem.block_size(),
-                "inode_count": filesystem.inode_count(),
-                "entries": entries,
-            }))
-        }),
-        JobRequest::FilesystemOpen { path, offset_bytes } => {
-            manager.submit("filesystem_open", move |_| {
-                let filesystem = FileSystem::open(Path::new(&path), offset_bytes)
-                    .map_err(|error| JobError::failed("filesystem.open", error.to_string()))?;
-                job_success(json!({
-                    "kind": filesystem.kind(),
-                    "block_size": filesystem.block_size(),
-                    "inode_count": filesystem.inode_count(),
-                    "root_inode": filesystem.root_inode(),
-                }))
+fn handle_job_submit(manager: &JobManager, request_bytes: &[u8]) -> Result<Vec<u8>, FfiError> {
+    let request = parse_job_request(request_bytes)?;
+    if request.is_isolated() {
+        let operation = request.operation_name();
+        let worker_request = request_bytes.to_vec();
+        let job_id = manager
+            .submit(operation, move |context| {
+                parser_worker::run_job(&worker_request, &context)
             })
-        }
-        JobRequest::Verification {
-            path,
-            algorithms,
-            expected,
-            reports_dir,
-            report_base_name,
-        } => manager.submit("verification", move |_| {
-            let report = verify_image(Path::new(&path), &algorithms, &expected)
-                .map_err(|error| JobError::failed("verification.failed", error.to_string()))?;
-            let report_paths = match reports_dir {
-                Some(directory) => Some(
-                    write_verification_report_set(
-                        Path::new(&directory),
-                        report_base_name.as_deref().unwrap_or("verification"),
-                        &report,
-                    )
-                    .map_err(|error| {
-                        JobError::failed("verification.report", error.message().to_owned())
-                    })?,
-                ),
-                None => None,
-            };
-            job_success(json!({
-                "report": report,
-                "reports": report_paths,
-            }))
-        }),
-        JobRequest::Acquisition {
-            source_path,
-            destination_dir,
-            base_name,
-            format,
-            options,
-            reports_dir,
-            report_base_name,
-        } => manager.submit("acquisition", move |context| {
-            let report_name = report_base_name
-                .clone()
-                .unwrap_or_else(|| base_name.clone());
-            let result = acquire_path_with_cancel(
-                AcquisitionRequest {
-                    source_path: source_path.into(),
-                    destination_dir: destination_dir.into(),
-                    base_name,
-                    format,
-                    options,
-                },
-                &context.cancellation_token(),
-            )
-            .map_err(|error| JobError::failed("acquisition.failed", error.to_string()))?;
-            match result.status {
-                AcquisitionStatus::Succeeded => {
-                    let report_paths = match reports_dir {
-                        Some(directory) => Some(
-                            write_acquisition_report_set(
-                                Path::new(&directory),
-                                &report_name,
-                                &result.manifest,
-                            )
-                            .map_err(|error| {
-                                JobError::failed("acquisition.report", error.message().to_owned())
-                            })?,
-                        ),
-                        None => None,
-                    };
-                    job_success(json!({
-                        "status": result.status,
-                        "manifest": result.manifest,
-                        "manifest_path": result.manifest_path,
-                        "reports": report_paths,
-                    }))
-                }
-                AcquisitionStatus::Partial => {
-                    let value = job_value(json!({
-                        "status": result.status,
-                        "manifest": result.manifest,
-                        "manifest_path": result.manifest_path,
-                    }))?;
-                    Ok(JobOutcome::partial(
-                        value,
-                        "acquisition completed with read errors or unverified output",
-                    ))
-                }
-                AcquisitionStatus::Failed => Err(JobError::failed(
-                    "acquisition.failed",
-                    "acquisition did not produce a verified image",
-                )),
-                AcquisitionStatus::Cancelled => Err(JobError::cancelled("acquisition cancelled")),
-            }
-        }),
-        JobRequest::SourceSnapshot { path } => manager.submit("source_snapshot", move |_| {
-            let image = open_image(Path::new(&path))
-                .map_err(|error| JobError::failed("source.open", error.to_string()))?;
-            let metadata = image.metadata();
-            job_success(json!({
-                "format": metadata.format,
-                "logical_length": metadata.logical_length,
-                "sector_size": metadata.sector_size,
-                "source": metadata.source,
-            }))
-        }),
+            .map_err(job_submit_error)?;
+        return success_bytes(json!({"job_id": job_id}));
+    }
+    let job_id = match request {
         JobRequest::EvidenceList { db_path, case_id } => {
             manager.submit("evidence_list", move |_| {
                 let store = CaseStore::open(Path::new(&db_path))
@@ -813,9 +688,17 @@ fn handle_job_submit(manager: &JobManager, request: &[u8]) -> Result<Vec<u8>, Ff
             action,
             subject_id,
             details,
+            db_path,
         } => manager.submit("audit_append", move |_| {
             let mut log = AuditLog::open_append(Path::new(&audit_path))
                 .map_err(|error| JobError::failed("audit.open", error.to_string()))?;
+            // A caller-supplied path may not target another case's history.
+            if let Some(db_path) = db_path {
+                let store = CaseStore::open(Path::new(&db_path))
+                    .map_err(|error| JobError::failed("audit.case", error.to_string()))?;
+                require_case_audit_binding(&store, case_id, log.path())
+                    .map_err(|error| JobError::failed(error.code, error.message))?;
+            }
             let receipt = log
                 .append(AuditEvent {
                     case_id,
@@ -831,9 +714,48 @@ fn handle_job_submit(manager: &JobManager, request: &[u8]) -> Result<Vec<u8>, Ff
                 "record_hash": receipt.record_hash.to_hex(),
             }))
         }),
-        JobRequest::AuditVerify { audit_path } => manager.submit("audit_verify", move |_| {
+        JobRequest::AuditVerify {
+            audit_path,
+            db_path,
+            case_id,
+        } => manager.submit("audit_verify", move |_| {
+            // Bind the verification to the case before attesting anything, so a
+            // valid chain belonging to a different case is not reported.
+            let binding = match (db_path, case_id) {
+                (Some(db_path), Some(case_id)) => {
+                    let store = CaseStore::open(Path::new(&db_path))
+                        .map_err(|error| JobError::failed("audit.case", error.to_string()))?;
+                    require_case_audit_binding(&store, case_id, Path::new(&audit_path))
+                        .map_err(|error| JobError::failed(error.code, error.message))?;
+                    Some((store, case_id))
+                }
+                _ => None,
+            };
             let status = AuditLog::verify_chain(Path::new(&audit_path))
                 .map_err(|error| JobError::failed("audit.verify", error.to_string()))?;
+            if let Some((store, case_id)) = binding {
+                // The chain must still end where this case last recorded. A chain
+                // that verifies but sits behind the recorded head has lost or
+                // rolled back records, which chain-internal checks cannot see.
+                let recorded = store
+                    .case_audit_head(case_id)
+                    .map_err(|error| JobError::failed("audit.case", error.to_string()))?;
+                let head = status.head_hash().map(|hash| hash.to_hex().to_owned());
+                if let Some(recorded) = recorded
+                    && recorded != head.clone().unwrap_or_default()
+                {
+                    return Err(JobError::failed(
+                        "audit.head_mismatch",
+                        format!(
+                            "audit chain head {} does not match the head recorded for this case ({recorded})",
+                            head.as_deref().unwrap_or("none")
+                        ),
+                    ));
+                }
+                store
+                    .record_case_audit_head(case_id, head.as_deref())
+                    .map_err(|error| JobError::failed("audit.case", error.to_string()))?;
+            }
             job_success(json!({
                 "valid": status.is_valid(),
                 "record_count": status.record_count(),
@@ -841,115 +763,13 @@ fn handle_job_submit(manager: &JobManager, request: &[u8]) -> Result<Vec<u8>, Ff
                 "reason": status.reason(),
             }))
         }),
-        JobRequest::HexPreview {
-            path,
-            offset_bytes,
-            metadata_address,
-            file_offset,
-            length,
-        } => manager.submit("hex_preview", move |_| {
-            let filesystem = FileSystem::open(Path::new(&path), offset_bytes)
-                .map_err(|error| JobError::failed("filesystem.open", error.to_string()))?;
-            let file = filesystem
-                .open_file(metadata_address)
-                .map_err(|error| JobError::failed("filesystem.file", error.to_string()))?;
-            let source = EvidenceByteSource { file };
-            let page = hex_page(&source, file_offset, length)
-                .map_err(|error| JobError::failed("preview.hex", error.to_string()))?;
-            job_success(page)
-        }),
-        JobRequest::TextPreview {
-            path,
-            offset_bytes,
-            metadata_address,
-            file_offset,
-            max_bytes,
-        } => manager.submit("text_preview", move |_| {
-            let filesystem = FileSystem::open(Path::new(&path), offset_bytes)
-                .map_err(|error| JobError::failed("filesystem.open", error.to_string()))?;
-            let file = filesystem
-                .open_file(metadata_address)
-                .map_err(|error| JobError::failed("filesystem.file", error.to_string()))?;
-            let source = EvidenceByteSource { file };
-            let preview = preview_text(&source, file_offset, max_bytes)
-                .map_err(|error| JobError::failed("preview.text", error.to_string()))?;
-            job_success(preview)
-        }),
-        JobRequest::FileSignature {
-            path,
-            offset_bytes,
-            metadata_address,
-        } => manager.submit("file_signature", move |_| {
-            let filesystem = FileSystem::open(Path::new(&path), offset_bytes)
-                .map_err(|error| JobError::failed("filesystem.open", error.to_string()))?;
-            let file = filesystem
-                .open_file(metadata_address)
-                .map_err(|error| JobError::failed("filesystem.file", error.to_string()))?;
-            let source = EvidenceByteSource { file };
-            let signature = identify_signature(&source)
-                .map_err(|error| JobError::failed("preview.signature", error.to_string()))?;
-            job_success(signature)
-        }),
-        JobRequest::ExtractFile {
-            path,
-            offset_bytes,
-            parent_inode,
-            metadata_address,
-            destination_root,
-        } => manager.submit("extract_file", move |_| {
-            let filesystem = FileSystem::open(Path::new(&path), offset_bytes)
-                .map_err(|error| JobError::failed("filesystem.open", error.to_string()))?;
-            let entry = filesystem
-                .directory_entry(parent_inode, metadata_address)
-                .map_err(|error| JobError::failed("filesystem.file", error.to_string()))?;
-            let mut extractor =
-                Extractor::create(Path::new(&destination_root), ExtractionOptions::default())
-                    .map_err(|error| JobError::failed("extraction.root", error.to_string()))?;
-            let record = extractor
-                .extract_file(&filesystem, &entry)
-                .map_err(|error| JobError::failed("extraction.file", error.to_string()))?;
-            job_success(record)
-        }),
-        JobRequest::ExtractDirectory {
-            path,
-            offset_bytes,
-            inode,
-            directory_name,
-            destination_root,
-            reports_dir,
-            base_name,
-        } => manager.submit("extract_directory", move |_| {
-            let filesystem = FileSystem::open(Path::new(&path), offset_bytes)
-                .map_err(|error| JobError::failed("filesystem.open", error.to_string()))?;
-            let mut extractor =
-                Extractor::create(Path::new(&destination_root), ExtractionOptions::default())
-                    .map_err(|error| JobError::failed("extraction.root", error.to_string()))?;
-            let manifest = extractor
-                .extract_directory(&filesystem, inode, &directory_name)
-                .map_err(|error| JobError::failed("extraction.directory", error.to_string()))?;
-            let report_paths =
-                write_extraction_report_set(Path::new(&reports_dir), &base_name, &manifest)
-                    .map_err(|error| {
-                        JobError::failed("extraction.report", error.message().to_owned())
-                    })?;
-            let status = manifest.status;
-            let result = job_value(serde_json::json!({
-                "manifest": manifest,
-                "reports": {
-                    "json": report_paths.json,
-                    "csv": report_paths.csv,
-                    "html": report_paths.html,
-                },
-            }))?;
-            if status == extraction::ManifestStatus::Partial {
-                Ok(JobOutcome::partial(
-                    result,
-                    "directory extraction completed with failed entries",
-                ))
-            } else {
-                Ok(JobOutcome::succeeded(result))
-            }
-        }),
+        _ => {
+            return Err(FfiError {
+                status: ofi_status::OFI_STATUS_OPERATION_FAILED,
+                code: "job.isolation_required",
+                message: "evidence operation bypassed the parser worker".to_owned(),
+            });
+        }
     }
     .map_err(job_submit_error)?;
     success_bytes(json!({"job_id": job_id}))
@@ -1001,7 +821,11 @@ unsafe fn request_bytes(request: *const u8, request_len: usize) -> Result<Vec<u8
 
 fn handle_case_create(request: &[u8]) -> Result<Vec<u8>, FfiError> {
     let request: CaseCreateRequest = parse_request(request)?;
-    let mut audit = open_audit(request.audit_path.as_deref())?;
+    let path = case_audit_path(&request.db_path, request.audit_path.as_deref());
+    // Preflight before the commit so an unusable log blocks the write. The log
+    // is closed immediately: holding an exclusive lock across the database write
+    // (or across a worker fork) would block later audited operations.
+    open_case_audit(&path)?;
     let store =
         CaseStore::open(Path::new(&request.db_path)).map_err(|error| operation_error(&error))?;
     let record = store
@@ -1011,23 +835,24 @@ fn handle_case_create(request: &[u8]) -> Result<Vec<u8>, FfiError> {
             examiner: request.examiner,
         })
         .map_err(|error| operation_error(&error))?;
-    if let Some(log) = audit.as_mut() {
-        append_committed_audit(
-            log,
-            record.id,
-            "case.created",
-            record.id.to_string(),
-            BTreeMap::from([("title".to_owned(), record.title.clone())]),
-        )?;
-    }
+    // Replay the queued event before binding: an append failure must surface as
+    // audit.append_after_commit with the event retained, not as a bind error.
+    let bound = std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
+    replay_outbox(&store, &bound)?;
+    store
+        .bind_case_audit(record.id, &bound)
+        .map_err(|error| operation_error(&error))?;
     success_bytes(record)
 }
 
 fn handle_evidence_add(request: &[u8]) -> Result<Vec<u8>, FfiError> {
     let request: EvidenceAddRequest = parse_request(request)?;
-    let mut audit = open_audit(request.audit_path.as_deref())?;
+    let path = case_audit_path(&request.db_path, request.audit_path.as_deref());
+    open_case_audit(&path)?;
     let store =
         CaseStore::open(Path::new(&request.db_path)).map_err(|error| operation_error(&error))?;
+    // Evidence may only be added to the case's own log, never to an unrelated one.
+    require_case_audit_binding(&store, request.case_id, &path)?;
     let record = store
         .add_evidence(AddEvidence {
             id: request.id,
@@ -1037,52 +862,154 @@ fn handle_evidence_add(request: &[u8]) -> Result<Vec<u8>, FfiError> {
             source: request.source,
         })
         .map_err(|error| operation_error(&error))?;
-    if let Some(log) = audit.as_mut() {
-        append_committed_audit(
-            log,
-            record.case_id,
-            "evidence.added",
-            record.id.to_string(),
-            BTreeMap::from([
-                ("source_path".to_owned(), record.source_path.clone()),
-                ("length".to_owned(), record.source.length.to_string()),
-            ]),
-        )?;
-    }
+    // The evidence row and its audit event committed together, so replaying the
+    // outbox records this event and any earlier one that could not be appended.
+    replay_outbox(&store, &path)?;
     success_bytes(record)
 }
 
-fn open_audit(path: Option<&str>) -> Result<Option<AuditLog>, FfiError> {
-    path.map(|path| {
-        AuditLog::open_append(Path::new(path)).map_err(|error| FfiError {
+/// Resolves the audit log path for a case write.
+///
+/// An omitted path falls back to `audit.jsonl` beside the case database, which
+/// is the same location the desktop uses.
+fn case_audit_path(db_path: &str, path: Option<&str>) -> PathBuf {
+    let db = Path::new(db_path);
+    // Resolve against the database's own directory in absolute form, so a later
+    // lookup cannot land in the process working directory.
+    let parent = db
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| {
+            std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+        });
+    let parent = std::fs::canonicalize(&parent).unwrap_or(parent);
+    let candidate = path.map_or_else(
+        || parent.join(CASE_AUDIT_FILE_NAME),
+        PathBuf::from,
+    );
+    if candidate.is_absolute() {
+        candidate
+    } else {
+        parent.join(candidate)
+    }
+}
+
+/// Proves the audit log can be opened and appended to, then closes it.
+///
+/// Case and evidence state is never committed without its audit record, so this
+/// runs before the database write and fails the operation when the log is
+/// unusable. The handle is dropped immediately: the log holds an exclusive
+/// lock, and holding it across the database write or a worker fork would block
+/// the next audited operation.
+fn open_case_audit(path: &Path) -> Result<(), FfiError> {
+    AuditLog::open_append(path)
+        .map(drop)
+        .map_err(|error| FfiError {
             status: ofi_status::OFI_STATUS_OPERATION_FAILED,
             code: "audit.open",
             message: error.to_string(),
         })
-    })
-    .transpose()
 }
 
-fn append_committed_audit(
-    log: &mut AuditLog,
+/// Rejects an audit log that does not belong to the case being written.
+///
+/// A case binds its log on creation. Once bound, writing evidence through a
+/// different log would let one case's events land in another case's history.
+fn require_case_audit_binding(
+    store: &CaseStore,
     case_id: CaseId,
-    action: &str,
-    subject_id: String,
-    details: BTreeMap<String, String>,
+    audit_path: &Path,
 ) -> Result<(), FfiError> {
-    log.append(AuditEvent {
-        case_id,
-        job_id: None,
-        actor: "examiner".to_owned(),
-        action: action.to_owned(),
-        subject_id: Some(subject_id),
-        details,
-    })
-    .map_err(|error| FfiError {
+    let bound = store.case_audit_path(case_id).map_err(|error| FfiError {
+        status: ofi_status::OFI_STATUS_OPERATION_FAILED,
+        code: "audit.case",
+        message: error.to_string(),
+    })?;
+    let Some(bound) = bound else {
+        // Unbound (a pre-upgrade case): adopt this log as the case's log, stored
+        // absolute so a later relative lookup cannot resolve to a different file.
+        let absolute = std::fs::canonicalize(audit_path).unwrap_or_else(|_| audit_path.to_path_buf());
+        return store
+            .bind_case_audit(case_id, &absolute)
+            .map_err(|error| FfiError {
+                status: ofi_status::OFI_STATUS_OPERATION_FAILED,
+                code: "audit.case",
+                message: error.to_string(),
+            });
+    };
+    if !same_path(&bound, audit_path) {
+        return Err(FfiError {
+            status: ofi_status::OFI_STATUS_OPERATION_FAILED,
+            code: "audit.case",
+            message: format!(
+                "audit log {} does not belong to the case, which uses {}",
+                audit_path.display(),
+                bound.display()
+            ),
+        });
+    }
+    Ok(())
+}
+
+/// Compares two audit paths, treating canonical forms as equal.
+fn same_path(left: &Path, right: &Path) -> bool {
+    if left == right {
+        return true;
+    }
+    match (std::fs::canonicalize(left), std::fs::canonicalize(right)) {
+        (Ok(left), Ok(right)) => left == right,
+        _ => false,
+    }
+}
+
+/// Replays pending outbox events into the case's audit log.
+///
+/// Every event is marked appended only after the append returned a receipt, so a
+/// failure leaves it pending for the next attempt instead of losing it. A
+/// committed case or evidence row therefore always has a recoverable route into
+/// the authoritative chain.
+fn replay_outbox(store: &CaseStore, path: &Path) -> Result<(), FfiError> {
+    let Some(case_id) = store.pending_case_id().map_err(|error| operation_error(&error))? else {
+        return Ok(());
+    };
+    let pending = store
+        .pending_audit_events(case_id)
+        .map_err(|error| operation_error(&error))?;
+    if pending.is_empty() {
+        return Ok(());
+    }
+    let mut log = AuditLog::open_append(path).map_err(|error| FfiError {
         status: ofi_status::OFI_STATUS_OPERATION_FAILED,
         code: "audit.append_after_commit",
-        message: format!("state was committed but the audit append failed: {error}"),
+        message: format!(
+            "state was committed but the audit append failed; {} event(s) remain queued: {error}",
+            pending.len()
+        ),
     })?;
+    for (outbox_id, event_json) in pending {
+        let event: AuditEvent = serde_json::from_str(&event_json).map_err(|error| FfiError {
+            status: ofi_status::OFI_STATUS_OPERATION_FAILED,
+            code: "audit.outbox",
+            message: format!("queued audit event is unreadable: {error}"),
+        })?;
+        let receipt = match log.append(event) {
+            Ok(receipt) => receipt,
+            Err(error) => {
+                return Err(FfiError {
+                    status: ofi_status::OFI_STATUS_OPERATION_FAILED,
+                    code: "audit.append_after_commit",
+                    message: format!(
+                        "state was committed but the audit append failed; queued events are retained: {error}"
+                    ),
+                });
+            }
+        };
+        store
+            .mark_audit_event_appended(outbox_id, receipt.sequence)
+            .map_err(|error| operation_error(&error))?;
+    }
+    drop(log);
     Ok(())
 }
 

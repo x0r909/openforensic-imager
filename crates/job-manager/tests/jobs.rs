@@ -135,3 +135,22 @@ fn unknown_job_snapshot_is_none() {
 
     assert!(manager.snapshot(&id).unwrap().is_none());
 }
+
+/// ACQ-011: a cancelled job must keep its retained-artifact payload.
+#[test]
+fn cancelled_job_keeps_its_retained_result() {
+    let manager = JobManager::new(1).unwrap();
+    let id = manager
+        .submit("acquisition", |_| {
+            Err(JobError::cancelled_with_result(
+                json!({"retained": true, "staging_path": "/tmp/x"}),
+                "cancelled with retained output",
+            ))
+        })
+        .unwrap();
+    let snapshot = manager.wait(&id, Duration::from_secs(5)).unwrap().unwrap();
+    assert_eq!(snapshot.status, JobStatus::Cancelled);
+    let result = snapshot.result.expect("cancelled job lost its retained payload");
+    assert_eq!(result["retained"], true);
+    assert_eq!(result["staging_path"], "/tmp/x");
+}
