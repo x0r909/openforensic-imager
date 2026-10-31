@@ -1,5 +1,7 @@
+#include <QFile>
 #include <QJsonArray>
 #include <QJsonObject>
+#include <QRegularExpression>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QUuid>
@@ -22,6 +24,7 @@ private slots:
     void viewerRendersHexRows();
     void viewerRejectsBinaryText();
     void caseCreationWritesAuditLog();
+    void evidenceTextBindingsArePlainText();
 };
 
 void ModelTests::evidenceTreeStartsEmpty() {
@@ -190,6 +193,53 @@ void ModelTests::caseCreationWritesAuditLog() {
     QFile audit(directory.filePath(QStringLiteral("audit.jsonl")));
     QVERIFY(audit.open(QIODevice::ReadOnly));
     QVERIFY(audit.readAll().contains("case.created"));
+}
+
+// UI-011 / VIEW-009: evidence-controlled text must render literally. Every Text
+// element bound to model data must pin Text.PlainText; the Qt default is
+// AutoText, which interprets markup as rich text and can load local resources.
+void ModelTests::evidenceTextBindingsArePlainText() {
+    const QStringList sources{
+        QStringLiteral(":/qml/FileList.qml"),
+        QStringLiteral(":/qml/EvidenceTree.qml"),
+        QStringLiteral(":/qml/PropertiesPanel.qml"),
+    };
+    const QRegularExpression textElement(QStringLiteral("Text\\s*\\{"));
+    // Expand/collapse glyphs and other computed chrome are not evidence text.
+    const QRegularExpression evidenceBinding(QStringLiteral(
+        "text:\\s*(row|propertyRow|model|entry)\\.(name|sizeText|typeText|metadataText|statusText|kind|group|key|value|provenance)\\b"));
+
+    int checked = 0;
+    for (const QString &path : sources) {
+        QFile file(path);
+        QVERIFY2(file.open(QIODevice::ReadOnly), qPrintable(path));
+        const QStringList lines = QString::fromUtf8(file.readAll()).split(u'\n');
+        for (int index = 0; index < lines.size(); ++index) {
+            bool inlineElement = textElement.match(lines.at(index)).hasMatch()
+                && evidenceBinding.match(lines.at(index)).hasMatch();
+            bool blockElement = evidenceBinding.match(lines.at(index)).hasMatch();
+            if (!inlineElement && !blockElement) {
+                continue;
+            }
+            // The binding and its textFormat may sit on the same line or in the
+            // element block that follows; check a bounded window either way.
+            QString window = lines.at(index);
+            for (int look = index + 1; look < lines.size() && look <= index + 6; ++look) {
+                window += u'\n' + lines.at(look);
+                if (lines.at(look).contains(u'}' ) && !inlineElement) {
+                    break;
+                }
+            }
+            QVERIFY2(window.contains(QStringLiteral("Text.PlainText")),
+                     qPrintable(QStringLiteral("%1:%2 binds evidence text without Text.PlainText")
+                                    .arg(path)
+                                    .arg(index + 1)));
+            ++checked;
+        }
+    }
+
+    // Guard against the matcher silently matching nothing.
+    QVERIFY2(checked >= 11, qPrintable(QStringLiteral("only %1 evidence bindings found").arg(checked)));
 }
 
 QTEST_MAIN(ModelTests)

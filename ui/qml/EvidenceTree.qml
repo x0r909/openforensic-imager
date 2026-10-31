@@ -114,6 +114,7 @@ Rectangle {
 
                     Text {
                         text: row.name
+                        textFormat: Text.PlainText
                         color: root.theme.text
                         font.family: root.theme.uiFont
                         font.pixelSize: 12
@@ -123,6 +124,7 @@ Rectangle {
 
                     Text {
                         text: row.kind
+                        textFormat: Text.PlainText
                         color: root.theme.textMuted
                         font.family: root.theme.uiFont
                         font.pixelSize: 10

@@ -31,6 +31,41 @@ pub fn verify_image(
     algorithms: &[HashAlgorithm],
     expected: &BTreeMap<HashAlgorithm, String>,
 ) -> Result<VerificationReport, AcquisitionError> {
+    let report = verify_image_report(path, algorithms, expected)?;
+    // A verification only counts as performed when every requested algorithm was
+    // actually compared against an expected digest and matched. Reporting
+    // NotAvailable as a successful job would let an unverified image read as
+    // verified, so the failure is returned to the caller instead.
+    if let Some((algorithm, outcome)) = report
+        .outcomes
+        .iter()
+        .find(|(_, outcome)| **outcome != VerificationOutcome::Match)
+    {
+        let reason = match outcome {
+            VerificationOutcome::Mismatch => "digest mismatch",
+            VerificationOutcome::NotAvailable => "no expected digest to compare",
+            VerificationOutcome::Match => unreachable!(),
+        };
+        return Err(AcquisitionError::new(
+            AcquisitionErrorCode::VerificationNotPerformed,
+            format!(
+                "{algorithm:?} verification did not match the expected digest: {reason}"
+            ),
+        ));
+    }
+    Ok(report)
+}
+
+/// Reads the image and reports each algorithm's outcome without judging it.
+///
+/// Used where the individual outcomes must be preserved, such as report
+/// rendering. Callers that present a verification verdict must use
+/// [`verify_image`], which fails unless every algorithm matched.
+pub fn verify_image_report(
+    path: &Path,
+    algorithms: &[HashAlgorithm],
+    expected: &BTreeMap<HashAlgorithm, String>,
+) -> Result<VerificationReport, AcquisitionError> {
     let reader = open_image(path).map_err(|error| {
         AcquisitionError::new(AcquisitionErrorCode::Verification, error.to_string())
     })?;

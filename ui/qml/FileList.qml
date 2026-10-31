@@ -114,11 +114,11 @@ Rectangle {
 
                 contentItem: Row {
                     width: parent.width
-                    Text { width: parent.width * 0.42; text: row.name; color: root.theme.text; font.family: root.theme.uiFont; font.pixelSize: 12; leftPadding: root.theme.space2; elide: Text.ElideRight; anchors.verticalCenter: parent.verticalCenter }
-                    Text { width: parent.width * 0.12; text: row.sizeText; color: root.theme.textMuted; font.family: root.theme.monoFont; font.pixelSize: 11; elide: Text.ElideRight; anchors.verticalCenter: parent.verticalCenter }
-                    Text { width: parent.width * 0.16; text: row.typeText; color: root.theme.textMuted; font.family: root.theme.uiFont; font.pixelSize: 11; elide: Text.ElideRight; anchors.verticalCenter: parent.verticalCenter }
-                    Text { width: parent.width * 0.16; text: row.metadataText; color: root.theme.textMuted; font.family: root.theme.monoFont; font.pixelSize: 11; elide: Text.ElideRight; anchors.verticalCenter: parent.verticalCenter }
-                    Text { width: parent.width * 0.14; text: row.statusText; color: row.deleted ? root.theme.error : root.theme.textMuted; font.family: root.theme.uiFont; font.pixelSize: 11; elide: Text.ElideRight; anchors.verticalCenter: parent.verticalCenter }
+                    Text { width: parent.width * 0.42; text: row.name; textFormat: Text.PlainText; color: root.theme.text; font.family: root.theme.uiFont; font.pixelSize: 12; leftPadding: root.theme.space2; elide: Text.ElideRight; anchors.verticalCenter: parent.verticalCenter }
+                    Text { width: parent.width * 0.12; text: row.sizeText; textFormat: Text.PlainText; color: root.theme.textMuted; font.family: root.theme.monoFont; font.pixelSize: 11; elide: Text.ElideRight; anchors.verticalCenter: parent.verticalCenter }
+                    Text { width: parent.width * 0.16; text: row.typeText; textFormat: Text.PlainText; color: root.theme.textMuted; font.family: root.theme.uiFont; font.pixelSize: 11; elide: Text.ElideRight; anchors.verticalCenter: parent.verticalCenter }
+                    Text { width: parent.width * 0.16; text: row.metadataText; textFormat: Text.PlainText; color: root.theme.textMuted; font.family: root.theme.monoFont; font.pixelSize: 11; elide: Text.ElideRight; anchors.verticalCenter: parent.verticalCenter }
+                    Text { width: parent.width * 0.14; text: row.statusText; textFormat: Text.PlainText; color: row.deleted ? root.theme.error : root.theme.textMuted; font.family: root.theme.uiFont; font.pixelSize: 11; elide: Text.ElideRight; anchors.verticalCenter: parent.verticalCenter }
                 }
 
                 onClicked: {

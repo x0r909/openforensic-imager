@@ -49,6 +49,7 @@ Rectangle {
                     visible: propertyRow.groupStart
                     width: parent.width
                     text: propertyRow.group
+                        textFormat: Text.PlainText
                     color: root.theme.text
                     font.family: root.theme.uiFont
                     font.pixelSize: 11
@@ -61,6 +62,7 @@ Rectangle {
                     spacing: root.theme.space2
                     Text {
                         text: propertyRow.key
+                        textFormat: Text.PlainText
                         color: root.theme.textMuted
                         font.family: root.theme.uiFont
                         font.pixelSize: 11
@@ -69,6 +71,7 @@ Rectangle {
                     }
                     Text {
                         text: propertyRow.value
+                        textFormat: Text.PlainText
                         color: root.theme.text
                         font.family: propertyRow.monospace ? root.theme.monoFont : root.theme.uiFont
                         font.pixelSize: 11
@@ -81,6 +84,7 @@ Rectangle {
                     visible: propertyRow.provenance.length > 0
                     width: parent.width
                     text: propertyRow.provenance
+                        textFormat: Text.PlainText
                     color: root.theme.textMuted
                     font.family: root.theme.uiFont
                     font.pixelSize: 10

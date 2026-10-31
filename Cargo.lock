@@ -211,6 +211,7 @@ dependencies = [
  "forensic-core",
  "rusqlite",
  "serde",
+ "serde_json",
  "tempfile",
  "time",
  "uuid",
@@ -480,6 +481,7 @@ dependencies = [
  "hashing",
  "image-reader",
  "job-manager",
+ "libc",
  "partition-analyzer",
  "proptest",
  "reporting",
@@ -488,6 +490,7 @@ dependencies = [
  "tempfile",
  "uuid",
  "viewer",
+ "worker-sandbox",
 ]
 
 [[package]]
@@ -658,6 +661,8 @@ dependencies = [
  "forensic-core",
  "forensic-fixtures",
  "hashing",
+ "image-reader",
+ "libc",
  "serde",
  "serde_json",
  "tempfile",

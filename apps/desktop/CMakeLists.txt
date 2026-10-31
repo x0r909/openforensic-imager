@@ -23,12 +23,13 @@ endif()
 set(OFI_RUST_TARGET_DIR "${OFI_RUST_DEFAULT_TARGET_DIR}" CACHE PATH
     "Directory containing libnative_bindings.so")
 set(OFI_NATIVE_LIBRARY "${OFI_RUST_TARGET_DIR}/libnative_bindings.so")
+set(OFI_NATIVE_WORKER "${OFI_RUST_TARGET_DIR}/ofi-parser-worker")
 set(OFI_NATIVE_INCLUDE "${CMAKE_CURRENT_SOURCE_DIR}/../../crates/native-bindings/include")
 
 add_custom_target(ofi_native_bindings ALL
     COMMAND cargo build --locked ${OFI_CARGO_PROFILE_ARGS} -p native-bindings
     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/../.."
-    BYPRODUCTS "${OFI_NATIVE_LIBRARY}"
+    BYPRODUCTS "${OFI_NATIVE_LIBRARY}" "${OFI_NATIVE_WORKER}"
     COMMENT "Building the Rust native bindings (${OFI_RUST_PROFILE})")
 
 set(OFI_APP_SOURCES
@@ -62,7 +63,10 @@ set_target_properties(openforensic-imager PROPERTIES
 add_custom_command(TARGET openforensic-imager POST_BUILD
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different
         "${OFI_NATIVE_LIBRARY}"
-        "$<TARGET_FILE_DIR:openforensic-imager>/libnative_bindings.so")
+        "$<TARGET_FILE_DIR:openforensic-imager>/libnative_bindings.so"
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+        "${OFI_NATIVE_WORKER}"
+        "$<TARGET_FILE_DIR:openforensic-imager>/ofi-parser-worker")
 
 qt_add_resources(openforensic-imager "qml"
     PREFIX "/qml"
@@ -87,6 +91,22 @@ add_executable(openforensic-imager-tests
     src/app_controller.cpp
     src/app_controller.h)
 
+# The tests assert on the shipped QML sources, so compile the same resource
+# set into the test binary under its own prefix.
+qt_add_resources(openforensic-imager-tests "qml"
+    PREFIX "/qml"
+    BASE "${CMAKE_CURRENT_SOURCE_DIR}/../../ui/qml"
+    FILES
+        ../../ui/qml/App.qml
+        ../../ui/qml/CasePanel.qml
+        ../../ui/qml/EmptyState.qml
+        ../../ui/qml/EvidenceTree.qml
+        ../../ui/qml/FileList.qml
+        ../../ui/qml/PropertiesPanel.qml
+        ../../ui/qml/TaskPanel.qml
+        ../../ui/qml/Theme.qml
+        ../../ui/qml/ViewerTabs.qml)
+
 target_include_directories(openforensic-imager-tests PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/src"
     "${OFI_NATIVE_INCLUDE}")
@@ -110,12 +130,17 @@ set_target_properties(openforensic-imager-tests PROPERTIES
 add_custom_command(TARGET openforensic-imager-tests POST_BUILD
     COMMAND "${CMAKE_COMMAND}" -E copy_if_different
         "${OFI_NATIVE_LIBRARY}"
-        "$<TARGET_FILE_DIR:openforensic-imager-tests>/libnative_bindings.so")
+        "$<TARGET_FILE_DIR:openforensic-imager-tests>/libnative_bindings.so"
+    COMMAND "${CMAKE_COMMAND}" -E copy_if_different
+        "${OFI_NATIVE_WORKER}"
+        "$<TARGET_FILE_DIR:openforensic-imager-tests>/ofi-parser-worker")
 
 install(TARGETS openforensic-imager
     RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}")
 install(PROGRAMS "${OFI_NATIVE_LIBRARY}"
     DESTINATION "${CMAKE_INSTALL_LIBDIR}/openforensic-imager")
+install(PROGRAMS "${OFI_NATIVE_WORKER}"
+    DESTINATION "${CMAKE_INSTALL_BINDIR}")
 install(FILES
     "${CMAKE_CURRENT_SOURCE_DIR}/../../packaging/common/openforensic-imager.desktop"
     DESTINATION "${CMAKE_INSTALL_DATADIR}/applications"

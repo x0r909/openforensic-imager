@@ -3,9 +3,9 @@ use std::io::Read;
 use std::process::Command;
 
 use acquisition::{
-    AcquisitionCompression, AcquisitionOptions, AcquisitionRequest, AcquisitionStatus,
-    CancellationToken, OutputFormat, VerificationOutcome, acquire_from_reader, acquire_path,
-    acquire_path_with_cancel, verify_image,
+    AcquisitionCompression, AcquisitionErrorCode, AcquisitionOptions, AcquisitionRequest,
+    AcquisitionStatus, CancellationToken, OutputFormat, VerificationOutcome, acquire_from_reader,
+    acquire_path, acquire_path_with_cancel, verify_image, verify_image_report,
 };
 use forensic_fixtures::{RawLayout, generate_raw_fixture};
 use hashing::{HashAlgorithm, StreamingHasher};
@@ -224,16 +224,45 @@ fn verification_distinguishes_match_mismatch_and_missing() {
     );
 
     let wrong = BTreeMap::from([(HashAlgorithm::Sha256, "00".repeat(32))]);
-    let mismatched = verify_image(&artifact, &[HashAlgorithm::Sha256], &wrong).unwrap();
+    let mismatch = verify_image(&artifact, &[HashAlgorithm::Sha256], &wrong).unwrap_err();
     assert_eq!(
-        mismatched.outcomes[&HashAlgorithm::Sha256],
+        mismatch.code(),
+        AcquisitionErrorCode::VerificationNotPerformed,
+        "a mismatch must not be reported as a completed verification"
+    );
+    assert_eq!(
+        verify_image_report(&artifact, &[HashAlgorithm::Sha256], &wrong).unwrap().outcomes
+            [&HashAlgorithm::Sha256],
         VerificationOutcome::Mismatch
     );
 
-    let absent = verify_image(&artifact, &[HashAlgorithm::Sha256], &BTreeMap::new()).unwrap();
+    // No expected digest means nothing was compared, which is never success.
+    let absent = verify_image(&artifact, &[HashAlgorithm::Sha256], &BTreeMap::new()).unwrap_err();
     assert_eq!(
-        absent.outcomes[&HashAlgorithm::Sha256],
+        absent.code(),
+        AcquisitionErrorCode::VerificationNotPerformed,
+        "an unperformed comparison must not be reported as a completed verification"
+    );
+    assert_eq!(
+        verify_image_report(&artifact, &[HashAlgorithm::Sha256], &BTreeMap::new())
+            .unwrap()
+            .outcomes[&HashAlgorithm::Sha256],
         VerificationOutcome::NotAvailable
+    );
+
+    // One matching algorithm does not rescue an algorithm that was not compared.
+    let partial = BTreeMap::from([(
+        HashAlgorithm::Sha256,
+        result.manifest.artifacts[0].sha256.clone(),
+    )]);
+    assert!(
+        verify_image(
+            &artifact,
+            &[HashAlgorithm::Sha256, HashAlgorithm::Sha1],
+            &partial
+        )
+        .is_err(),
+        "an uncompared requested algorithm must fail the verification"
     );
 }
 

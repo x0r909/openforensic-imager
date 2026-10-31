@@ -115,6 +115,9 @@ pub enum AcquisitionErrorCode {
     Write,
     Finalize,
     Verification,
+    /// The image was read but no digest could be compared, so no integrity
+    /// claim can be made. This is never reported as a successful verification.
+    VerificationNotPerformed,
     Io,
 }
 

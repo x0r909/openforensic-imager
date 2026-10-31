@@ -686,7 +686,20 @@ fn escape_html(value: &str) -> String {
 }
 
 fn validate_output(output_dir: &Path, base_name: &str) -> Result<(), ReportError> {
-    if !output_dir.is_dir() {
+    // A symlinked reports directory would redirect every leaf written beneath it,
+    // so the directory itself must be a real directory, not a link to one.
+    let metadata = std::fs::symlink_metadata(output_dir).map_err(|error| {
+        ReportError::new(format!(
+            "report output directory {} is not usable: {error}",
+            output_dir.display()
+        ))
+    })?;
+    if metadata.file_type().is_symlink() {
+        return Err(ReportError::new(
+            "report output directory must not be a symbolic link",
+        ));
+    }
+    if !metadata.is_dir() {
         return Err(ReportError::new("report output directory does not exist"));
     }
     if base_name.is_empty()
@@ -702,13 +715,24 @@ fn validate_output(output_dir: &Path, base_name: &str) -> Result<(), ReportError
 }
 
 fn write_owner_only(path: &Path, bytes: &[u8]) -> Result<(), ReportError> {
+    // Never follow a pre-existing leaf: a symlink, FIFO, or hard link planted in
+    // the output directory must not redirect or block the report write.
     let mut file = OpenOptions::new()
         .write(true)
         .create(true)
         .truncate(true)
         .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK | libc::O_CLOEXEC)
         .open(path)
         .map_err(|error| ReportError::new(error.to_string()))?;
+    let metadata = file
+        .metadata()
+        .map_err(|error| ReportError::new(error.to_string()))?;
+    if !metadata.is_file() {
+        return Err(ReportError::new(
+            "report target must be a regular file",
+        ));
+    }
     file.write_all(bytes)
         .map_err(|error| ReportError::new(error.to_string()))?;
     file.sync_all()

@@ -439,7 +439,18 @@ void AppController::handleJobUpdate(const QString &jobId, const QJsonObject &sna
         return;
     }
     if (status == QStringLiteral("cancelled")) {
-        setStatus(QStringLiteral("Task cancelled"));
+        // ACQ-011: a cancelled acquisition retains its partial output, so show
+        // the examiner where it is instead of discarding the information.
+        const QJsonObject retained = snapshot.value(QStringLiteral("result")).toObject();
+        const QString staging = retained.value(QStringLiteral("staging_path")).toString();
+        if (!staging.isEmpty() && retained.value(QStringLiteral("retained")).toBool()) {
+            m_properties.clear();
+            m_properties.append(QStringLiteral("Cancelled"), QStringLiteral("Retained output"),
+                                staging, {}, true);
+            setStatus(QStringLiteral("Task cancelled; partial output retained"));
+        } else {
+            setStatus(QStringLiteral("Task cancelled"));
+        }
         return;
     }
     const QJsonObject result = snapshot.value(QStringLiteral("result")).toObject();
@@ -514,10 +525,21 @@ void AppController::handleJobUpdate(const QString &jobId, const QJsonObject &sna
             m_properties.append(QStringLiteral("Verification"), part.left(split),
                                 part.mid(split + 2));
         }
-        const bool mismatch = outcomes.value(QStringLiteral("sha256")).toString()
-            == QStringLiteral("mismatch");
-        setStatus(mismatch ? QStringLiteral("Verification mismatch")
-                           : QStringLiteral("Verification completed"));
+        // A verification only reads as completed when every reported algorithm
+        // matched. A missing key, "not_available", or any other value must never
+        // be presented as success.
+        QString verdict = QStringLiteral("Verification completed");
+        for (auto it = outcomes.begin(); it != outcomes.end(); ++it) {
+            const QString value = it.value().toString();
+            if (value == QStringLiteral("mismatch")) {
+                verdict = QStringLiteral("Verification mismatch");
+                break;
+            }
+            if (value != QStringLiteral("match")) {
+                verdict = QStringLiteral("Verification not performed");
+            }
+        }
+        setStatus(verdict);
     } else if (pending.operation == QStringLiteral("source_snapshot_for_case")) {
         const QJsonObject snapshot = result.value(QStringLiteral("source")).toObject();
         QString error;

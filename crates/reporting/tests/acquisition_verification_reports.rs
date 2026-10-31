@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use acquisition::{
     AcquisitionCompression, AcquisitionOptions, AcquisitionRequest, OutputFormat, acquire_path,
-    verify_image,
+    verify_image_report,
 };
 use forensic_fixtures::{RawLayout, generate_raw_fixture};
 use hashing::HashAlgorithm;
@@ -39,7 +39,7 @@ fn writes_separate_acquisition_and_verification_reports() {
     })
     .unwrap();
     let artifact = destination.join(&result.manifest.artifacts[0].path);
-    let verification = verify_image(
+    let verification = verify_image_report(
         &artifact,
         &[HashAlgorithm::Sha256],
         &BTreeMap::from([(

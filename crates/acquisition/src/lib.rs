@@ -8,4 +8,4 @@ pub use acquire::{
     acquire_path_with_cancel,
 };
 pub use forensic_core::CancellationToken;
-pub use verify::{VerificationOutcome, VerificationReport, verify_image};
+pub use verify::{VerificationOutcome, VerificationReport, verify_image, verify_image_report};
