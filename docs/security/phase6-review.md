@@ -58,7 +58,12 @@ apply the sandbox before parsing, enforce rlimits and a watchdog, and add a
 crash-isolation integration test plus a clean packaging test for the worker
 binary.
 
-Status: Open. This is a release blocker, not a passing Phase 6 security claim.
+Status: Resolved in Phase 8. Every evidence-facing job now starts
+`ofi-parser-worker` under Landlock, seccomp, rlimits, a timeout, and a bounded
+JSON pipe protocol. See
+[phase8-review.md](phase8-review.md) for the current evidence and residual
+risks. The finding remains recorded here because it was open when the Phase 6
+gate was reviewed.
 
 ### P6-SEC-002: Database and audit writes are separate resources
 
@@ -66,18 +71,27 @@ Severity: Medium
 
 Audit-open now happens before the case or evidence database row is committed.
 This prevents the common failure where an unavailable or locked audit log leaves
-a committed database row. A write failure after the audit file has opened can
-still occur after the database commit.
+a committed database row.
 
-The API exposes that state as `audit.append_after_commit` instead of reporting a
-clean failure. The limitation is explicit, but there is no atomic cross-resource
-transaction or replayable outbox.
+A write failure after the audit file has opened could still occur after the
+database commit. That window is now closed by a durable outbox: the case or
+evidence row and its audit event are inserted in the same SQLite transaction,
+and the event is replayed into the hash-chained log afterwards. An event that
+cannot be appended stays queued and is replayed by the next audited operation, so
+a committed row always has a recoverable route into the authoritative history.
 
-Recommendation: add a durable outbox or reconciliation record that can append
-the missing audit event after restart, or move audit state into a transactional
-store with a documented recovery protocol.
+The API still reports `audit.append_after_commit` when the append fails, because
+the state genuinely is committed at that point. The difference is that the event
+is no longer lost, and the error message states how many events remain queued.
 
-Status: Open, mitigated by preflight and explicit error reporting.
+Recommendation implemented: durable outbox plus replay
+(`crates/evidence-manager/src/migrations.rs` version 3,
+`app_audit_outbox` table, `replay_outbox` in
+`crates/native-bindings/src/lib.rs`).
+
+Status: Resolved. Covered by
+`audit_append_failure_is_recovered_from_the_durable_outbox` in
+`crates/native-bindings/tests/abi.rs`.
 
 ### P6-SEC-003: Sanitizer and long-duration fuzz gates are not run
 
@@ -102,15 +116,29 @@ The local SHA-256 chain detects ordinary edits, deletion, reordering, and
 truncation. It cannot prevent an attacker with case-directory access from
 rewriting the entire chain and recorded head.
 
-Recommendation: record the head hash in a separate case record, export it to an
-external system, or support signed checkpoints.
+Two cases that previously escaped detection are now closed:
 
-Status: Accepted limitation with report disclosure.
+- opening an existing log for append re-verifies the whole chain and requires the
+  tail to be the verified head, so a forged or rewritten tail can no longer
+  re-anchor the history;
+- a log whose final record is not newline-terminated is rejected, so a
+  byte-truncated prefix is not accepted as a shorter valid chain.
+
+The remaining limitation is unchanged: an attacker who can rewrite **every**
+record and the head still produces an internally consistent chain. Closing that
+needs external notarization.
+
+Recommendation: record the head hash in a separate case record, export it to an
+external system, or support signed checkpoints. The case database now stores a
+per-case `audit_head_hash`, which is the first half of that recommendation.
+
+Status: Accepted limitation with report disclosure; the reopen and truncation
+defects are resolved.
 
 ## Residual risks
 
-- Native parser defects can still affect the desktop process until P6-SEC-001
-  is fixed.
+- Native parser defects are contained by a separate worker process, but the
+  worker is not a privilege boundary against kernel or sandbox escapes.
 - Short fuzz smoke runs do not establish parser safety.
 - The 8 GiB sparse capacity test does not establish multi-terabyte throughput
   or long-duration memory stability.
@@ -118,10 +146,19 @@ Status: Accepted limitation with report disclosure.
 - Extraction replacement tests use bounded relocation loops and do not exhaust
   scheduler interleavings.
 - GUI accessibility and external viewer isolation remain outside this review.
+- The worker response cap bounds retained bytes, not read work; a response that
+  crosses it is discarded entirely.
+- The seccomp policy is a deny-list, so a future syscall is permitted by default.
+- Cancellation kills the worker process group, leaving an orphan staging
+  directory that no reaper surfaces.
 
 ## Gate decision
 
 The tested Phase 6 controls have no failing test and `cargo-audit` reported no
-known vulnerability. The release security gate is not fully passed because
-parser process isolation is not wired, sanitizer coverage was not run, and the
-database/audit two-resource failure window remains.
+known vulnerability. Phase 8 resolves the parser dispatch portion of
+P6-SEC-001. The database/audit two-resource window (P6-SEC-002) is resolved by
+the durable outbox.
+
+The release security gate is still not fully passed because sanitizer coverage
+was not run on this host and the worker is not a privilege boundary against a
+kernel or sandbox escape.

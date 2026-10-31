@@ -1,6 +1,6 @@
 # Reproducible Build Instructions
 
-Status: Phase 7, Ubuntu 26.04 x86_64.
+Status: Phase 8, Ubuntu 26.04 x86_64.
 
 The reproducibility claim is limited to the tested host and package set. It does
 not claim bit-identical output across distributions, Qt versions, compiler

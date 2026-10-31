@@ -104,7 +104,7 @@ the smallest practical filesystem and system-call surface.
 - Runs a multithreaded Tokio runtime.
 - Validates all FFI inputs and catches Rust panics at the ABI boundary.
 - Owns the case database and append-only audit writer.
-- Starts one worker per job or a small bounded worker pool.
+- Starts one isolated worker process per evidence-facing job.
 - Assigns job identifiers and cancellation tokens.
 - Stores bounded progress snapshots rather than unbounded event streams.
 - Writes reports from committed metadata, not transient worker memory.
@@ -115,11 +115,13 @@ the smallest practical filesystem and system-call surface.
 - Opens source files or devices with `O_RDONLY | O_CLOEXEC`.
 - Uses bounded read buffers and checked offset arithmetic.
 - Loads pinned TSK and libewf builds.
-- Returns typed results and parser diagnostics over a local Unix socket.
+- Returns one bounded JSON result over stdout after reading one bounded JSON
+  request from stdin.
 - Runs with `PR_SET_NO_NEW_PRIVS`, seccomp, Landlock, and applicable rlimits.
 - May read only explicitly granted evidence paths and write only to a granted
   staging directory.
-- Is killed on timeout or protocol violation without taking down the GUI.
+- Runs in its own process group and is killed on timeout or cancellation without
+  taking down the GUI or job manager.
 
 ### FFI callback rule
 
@@ -135,7 +137,7 @@ own thread.
 apps/
   desktop/                 C++ Qt shell and QML bootstrap
   service/                 Rust application service binary
-  worker/                  Rust analysis worker binary
+  worker binary            crates/native-bindings/src/bin/ofi-parser-worker.rs
 crates/
   forensic-core/           IDs, ranges, statuses, errors, time provenance
   acquisition/             Source opening, read loop, output commits
@@ -164,8 +166,9 @@ packaging/
 scripts/
 ```
 
-`apps/service` and `apps/worker` are added to the suggested layout because the
-threat model requires a process boundary between the UI and native parsers.
+The initial implementation keeps the service inside `native-bindings` and
+places the worker binary beside the desktop executable. The process boundary is
+required because native parser failure must not terminate the UI or job manager.
 
 ## 7. Core domain model
 

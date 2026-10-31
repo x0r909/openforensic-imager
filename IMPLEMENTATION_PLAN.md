@@ -380,7 +380,16 @@ views, and full accessibility-tree testing remain open.
 - [x] Add JSON, CSV, and HTML audit reports with chain status and an explicit
   non-notarization limitation.
 - [x] Add `audit_append` and `audit_verify` ABI jobs.
-- [x] Preflight audit-log open before case and evidence database commits.
+- [x] Preflight audit-log open before case and evidence database commits, and
+  require the audit record: an omitted `audit_path` resolves to `audit.jsonl`
+  beside the case database rather than skipping the audit.
+- [x] Insert the audit event in the same transaction as the case or evidence row
+  (durable outbox) and replay pending events into the chain, closing the
+  P6-SEC-002 post-commit window.
+- [x] Bind each audit log to its case and reject an audit operation that names a
+  different case's log.
+- [x] Re-verify the whole chain when reopening for append, and reject a log whose
+  final record is not terminated.
 - [x] Add MBR, GPT, ext4, RAW/E01, and SHA-256 differential tests.
 - [x] Replace the side-effecting ABI fuzz target with a side-effect-free request
   parser target.
@@ -396,12 +405,12 @@ views, and full accessibility-tree testing remain open.
   [docs/testing/phase6-results.md](docs/testing/phase6-results.md).
 - [x] Record open security findings and residual risk in
   [docs/security/phase6-review.md](docs/security/phase6-review.md).
-- [ ] Wire the tested worker sandbox into parser dispatch. This is a high
-  security release blocker.
-- [ ] Run ASan, MSan, and a scheduled fuzz budget on nightly Rust. This host has
-  no rustup or nightly toolchain.
+- [x] Wire the tested worker sandbox into parser dispatch. Completed in Phase 8.
+- [ ] Run ASan, MSan, and a scheduled fuzz budget on nightly Rust.
+  Requires: a rustup-installed nightly toolchain. This host has none.
 - [ ] Run multi-terabyte acquisition and long-duration soak tests on release
   hardware.
+  Requires: release hardware with multi-terabyte storage.
 
 Phase 6 validation is complete at the executable coverage level. The production
 security gate remains open.
@@ -435,16 +444,120 @@ security gate remains open.
 - [x] Document installation, removal, case-data recovery, and reproducible
   build commands.
 - [ ] Install and exercise the DEB on a clean Ubuntu VM.
+  Requires: a disposable Ubuntu 26.04 VM and a release artifact.
 - [ ] Verify Debian, Arch Linux, Fedora, and ARM64 packaging.
+  Requires: one host (or VM) per distribution plus an ARM64 host.
 - [ ] Run `lintian` and complete downstream distribution policy review.
-- [ ] Replace the placeholder icon, select the project license, and complete
-  native dependency redistribution review.
-- [ ] Include Flatpak and SBOM output in the reproducibility comparison.
+  Requires: `lintian` installed; currently absent from this host.
+- [x] Select the project license and ship it with every artifact.
+  OpenForensic Imager is `GPL-3.0-or-later` (see `LICENSE`), matching Qt 6 under
+  its GPL option so no LGPL relinking obligation applies. `Cargo.toml`, the
+  AppStream metadata, `debian/copyright`, `THIRD_PARTY.md`, the CycloneDX SBOM,
+  and `README.md` all carry the same identifier.
+- [ ] Replace the placeholder icon.
+  Requires: final artwork. The current placeholder is CC0-1.0 and ships without
+  a licensing blocker.
+- [ ] Complete native dependency redistribution review.
+  Requires: a compliance pass over the pinned native versions listed in
+  `packaging/common/THIRD_PARTY.md`.
+- [x] Include SBOM output in the reproducibility comparison.
+  `scripts/verify-reproducible-packages.sh` compares the generated CycloneDX
+  SBOM between both builds alongside the DEB and AppImage.
+- [ ] Include Flatpak output in the reproducibility comparison.
+  Requires: `flatpak-builder` on the build host. Flatpak bundles are not
+  byte-reproducible by design, so this needs a metadata comparison, not a digest
+  match.
 - [ ] Run a packaged physical-device acquisition with a hardware write blocker.
+  Requires: a write blocker, a source device, and a release artifact.
 
 Phase 7 is complete as a locally tested development packaging increment. A
 production distribution gate remains open until the clean-system,
 cross-distribution, licensing, native dependency pinning, and device tests pass.
+
+## Phase 8 execution outline
+
+1. Route every evidence-facing job through a dedicated worker process.
+2. Apply rlimits, Landlock, and seccomp with thread synchronization before
+   parsing.
+3. Bound requests, responses, diagnostics, and wall-clock execution time.
+4. Contain worker crashes and terminate worker process groups on cancellation
+   or timeout.
+5. Ship and exercise the worker in DEB, AppImage, and Flatpak artifacts.
+6. Record the current security boundary and residual risks.
+
+### Phase 8 status
+
+- [x] Add `ofi-parser-worker` with a bounded JSON stdin/stdout protocol.
+- [x] Route image, partition, filesystem, acquisition, verification, preview,
+  signature, and extraction jobs through the worker.
+- [x] Keep database and audit jobs in the trusted process, refusing any audit or
+  metadata request that reaches the worker (`worker.unsupported_operation`).
+- [x] Spawn the worker with `env_clear()` and a minimal variable allowlist, with a
+  sentinel-variable regression test.
+- [x] Disable core dumps and apply address-space, CPU, descriptor, and file-size
+  limits.
+- [x] Apply Landlock read and write grants derived from each job.
+- [x] Apply seccomp across all worker threads and deny network, process
+  creation, execution, and ptrace.
+- [x] Enforce response and diagnostic bounds plus a one-hour default watchdog.
+- [x] Kill the worker process group on cancellation and timeout.
+- [x] Add crash-containment, cancellation, timeout, EWF worker, and package
+  worker tests.
+- [ ] Run sanitizer builds and a scheduled fuzz budget.
+  Requires: nightly toolchain (see Phase 6).
+- [ ] Install and exercise packages on clean VMs and secondary distributions.
+  Requires: disposable VMs per distribution.
+- [ ] Complete pinned native dependency and licensing review.
+  Requires: the project license decision.
+
+Phase 8 closes the parser-dispatch portion of P6-SEC-001 on the local host. The
+production security and distribution gates remain open for sanitizer evidence,
+clean-system testing, native dependency pinning, and licensing. The executable
+results are recorded in
+[`docs/testing/phase8-results.md`](docs/testing/phase8-results.md).
+
+### Phase 8 security fixes
+
+- [x] Make a verification fail unless every requested algorithm was compared and
+  matched. `verify_image` returns `VerificationNotPerformed` instead of a
+  successful report carrying `not_available`, and the desktop requires an
+  explicit `match` before showing "Verification completed".
+  `verify_image_report` remains for report rendering.
+- [x] Render evidence-controlled text as plain text. Every `Text` element bound
+  to row or property data pins `Text.PlainText`, guarded by a QML regression
+  test.
+- [x] Create or accept an output directory only when the current user owns it and
+  no other principal can write it, and open report leaves with
+  `O_NOFOLLOW | O_NONBLOCK` so a planted symlink or FIFO cannot redirect or
+  block the write.
+- [x] Wait briefly for a held audit lock instead of failing, so a concurrent
+  verification does not turn an ordinary append into
+  `audit.append_after_commit`.
+- [x] Report a cancelled acquisition's retained staging directory. A cancelled
+  job keeps its payload in the snapshot, so ACQ-011's "retain partial artifacts"
+  is visible to the examiner instead of silently discarded.
+- [x] Stop a worker that exceeds the response cap instead of draining it to EOF,
+  and match the worker's `RLIMIT_FSIZE` to the same 64 MiB budget.
+- [x] Honour `OFI_PARSER_WORKER` only in debug builds, so a release build cannot
+  be redirected to a substituted worker through the environment.
+- [x] Refuse a symlinked reports directory, and resolve the default audit path to
+  an absolute path beside the case database instead of the process working
+  directory.
+- [x] Compare the verified chain head against the head recorded for the case, so a
+  chain rolled back behind the recorded head is detected.
+
+### Known residual risks
+
+These are recorded as accepted limitations, not open tasks:
+
+- The seccomp policy is a deny-list rather than the allow-list the security model
+  describes.
+- Cancellation is delivered by SIGKILL, so `acquire_reader`'s cooperative check
+  never fires. The retained staging directory is reported, but no reaper or age
+  marker cleans orphaned staging directories.
+- The EWF read grant covers the image directory so sibling segments can be
+  opened.
+- No sanitizer or scheduled fuzz coverage exists on this host.
 
 ## Self-review
 

@@ -3,6 +3,10 @@
 Status: local development packaging increment passed on 2026-10-31. This is not
 a clean-system or production distribution claim.
 
+Historical note: the artifact hashes in this report predate the Phase 8 parser
+worker. Phase 8 rebuilds the packages and records replacement hashes in
+[phase8-results.md](phase8-results.md).
+
 ## Environment
 
 | Item | Observed value |
@@ -105,8 +109,8 @@ those configure-time warnings.
 - `lintian` and downstream distribution policy review were not run.
 - No packaged acquisition test used a physical device or hardware write blocker.
 - The Flatpak is analysis-only and has no physical-device access.
-- Parser dispatch remains in-process. The Phase 6 worker-isolation release
-  blocker remains open.
+- At this checkpoint, parser dispatch remained in-process. Phase 8 later closed
+  that release blocker.
 - Sanitizer and scheduled fuzz runs remain open.
 
 ## Reproduction commands

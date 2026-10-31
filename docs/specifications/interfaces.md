@@ -26,6 +26,44 @@ major and minor version.
 - Callback payloads are copied for the receiver and remain valid only for the
   duration of the callback unless ownership is explicitly transferred.
 
+## Evidence worker protocol
+
+Evidence-facing jobs run in `ofi-parser-worker`. The process receives one JSON
+job request on stdin and emits one JSON response on stdout. The parent closes
+stdin after writing the request and bounds both directions:
+
+- Request: 1 MiB.
+- Response: 64 MiB.
+- Diagnostics: 64 KiB.
+- Default wall-clock deadline: 1 hour.
+- Deadline override: `OFI_WORKER_TIMEOUT_SECS`, capped at 24 hours.
+
+The parent starts each worker in a new process group. Cancellation and timeout
+send `SIGKILL` to the group, then reap the worker. The job manager returns
+`cancelled`, `worker.timeout`, `worker.crashed`, `worker.protocol`, or
+`worker.sandbox` rather than treating an incomplete response as success.
+
+The worker applies the following before parsing:
+
+- Core dumps disabled.
+- Address space capped at 4 GiB.
+- CPU time capped at 1 hour.
+- Open descriptors capped at 256.
+- File size capped at 16 TiB.
+- Landlock read grants for the evidence path and timezone data.
+- Landlock write grants for selected output and report directories.
+- `PR_SET_NO_NEW_PRIVS`.
+- seccomp filters synchronized across threads, denying network, process
+  creation, execution, and ptrace syscalls.
+
+EWF jobs receive read access to the image directory so sibling segments can be
+opened. Other image jobs receive read access to the canonical image path. The
+worker and desktop process run under the same Unix user; this protocol provides
+fault containment and filesystem/syscall reduction, not a privilege boundary.
+
+`evidence_list`, `audit_append`, and `audit_verify` remain in the trusted
+process because they operate on case metadata rather than evidence parsers.
+
 ## Request envelope
 
 ```json
@@ -282,15 +320,30 @@ Audit operations:
 
 `audit_verify` returns `valid`, `record_count`, `head_hash`, and `reason`.
 `audit_append` runs under the exclusive audit writer lock. Case creation and
-evidence insertion accept an optional `audit_path`. That log is opened before
-the SQLite write so an unavailable log prevents the database commit. A write
-failure after a successful database commit is reported with the explicit
-`audit.append_after_commit` code. The two storage resources do not provide a
-cross-resource transaction.
+evidence insertion accept an optional `audit_path`; when it is omitted the log
+is `audit.jsonl` beside the case database, so a missing field never skips the
+audit. The log is opened before the SQLite write so an unavailable log prevents
+the database commit.
+
+Both operations accept an optional `db_path` (and `case_id` for `audit_verify`)
+to bind the request to a case. When supplied, a log that does not belong to that
+case is rejected with `audit.case` instead of being appended to or attested.
+
+The audit event is inserted in the same transaction as the case or evidence row
+and then replayed into the JSONL chain. If the append cannot happen the state is
+committed, the event stays queued, and the call reports
+`audit.append_after_commit`; the next audited operation replays it. There is no
+atomic transaction across the two files, but no committed row is left
+unrecoverable.
+
+Verification reports `verification.not_performed` unless every requested
+algorithm was compared against an expected digest and matched. A missing
+expected digest is a failure, not a silent success.
 
 A successful submission returns a `job_id`. The caller polls
 `ofi_job_snapshot` and may call `ofi_job_cancel` while the job is non-terminal.
-Cancellation is cooperative; a terminal state remains immutable.
+Cancellation terminates the worker process group; a terminal state remains
+immutable.
 
 Preview and extraction operations:
 

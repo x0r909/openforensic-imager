@@ -281,8 +281,8 @@ truncated image headers, and decompression-bomb dimensions.
 
 Actual image and PDF rendering is not yet enabled. A renderer must run in the
 isolated worker, enforce the same pixel and byte limits, and receive only the
-bounded preview plan or staged bytes. High-frequency race stress, fuzzing, and
-worker sandbox verification remain Phase 6 gates.
+bounded preview plan or staged bytes. High-frequency race stress and sanitizer
+coverage remain open validation work.
 
 ## 16. Phase 6 validation status
 
@@ -298,15 +298,32 @@ The following controls now have executable negative or differential evidence:
 - Arbitrary C ABI JSON and viewer bytes are covered by stable property tests and
   short fuzz smoke runs.
 
-The tested sandbox crate is not yet connected to parser dispatch. TSK, libewf,
-filesystem, and viewer parsing still execute in the desktop process. This is an
-open high-severity architecture and release blocker. Sanitizer coverage and a
-scheduled fuzz budget are also not available on the current stable-only host.
+Phase 8 connects image, partition, filesystem, acquisition, verification,
+preview, signature, and extraction jobs to `ofi-parser-worker`. TSK, libewf,
+filesystem, and viewer parsing no longer execute in the desktop process. The
+worker applies Landlock, seccomp with thread synchronization, resource limits,
+a process-group watchdog, and bounded request and response sizes. Crash,
+cancellation, timeout, and package execution tests pass on the local host.
 
-Audit-log open is preflighted before case or evidence database commits. A write
-failure after those commits is surfaced as `audit.append_after_commit`; there is
-no atomic transaction across SQLite and the JSONL audit file.
+This is process isolation under the same Unix user, not a privilege boundary
+against a kernel or sandbox escape. The worker is spawned with an empty
+environment plus a small allowlist (`LANG`, `LC_ALL`, `LC_CTYPE`, `TZ`, `TZDIR`,
+`LIBEWF_VERBOSE`), so no credential, token, or key in the desktop environment
+reaches evidence parser code. Case database and audit writers remain in the
+trusted process because they do not parse evidence content. Sanitizer coverage
+and a scheduled fuzz budget are still unavailable on this stable-only host.
 
-See [docs/security/phase6-review.md](docs/security/phase6-review.md) for the full
+Audit-log open is preflighted before case or evidence database commits, and the
+audit event is inserted in the same SQLite transaction as the case or evidence
+row. It is then replayed into the JSONL chain; an event that cannot be appended
+stays queued and is replayed by the next audited operation, so a committed row
+always has a recoverable route into the history. Opening an existing log for
+append re-verifies the whole chain and requires the tail to be the verified head,
+so a rewritten or truncated history cannot be re-anchored. Each case is bound to
+its log, and an audit operation naming a different case's log is rejected.
+
+See [docs/security/phase8-review.md](docs/security/phase8-review.md) for the
+current boundary and residual risks, and
+[docs/security/phase6-review.md](docs/security/phase6-review.md) for the full
 finding list and release-gate decision.
 

@@ -2,6 +2,10 @@
 
 Date: 2026-10-30
 
+Superseded status: Phase 8 subsequently connected evidence-facing parser
+dispatch to a separate worker. The counts and limitations below describe the
+Phase 6 checkpoint, not the current parser boundary.
+
 ## Scope
 
 Phase 6 adds security, differential, audit, fuzz, race, and capacity evidence to
@@ -193,9 +197,8 @@ tests. `qmllint` exited 0 without diagnostics.
 
 ## Limitations
 
-- The worker-sandbox crate has negative tests, but parser dispatch still runs
-  in-process in the desktop application. Production parser process isolation
-  remains an open architecture and release blocker.
+- At this checkpoint, the worker-sandbox crate had negative tests but parser
+  dispatch still ran in-process. Phase 8 closed that dispatch gap.
 - Fuzzing was a short smoke run without ASan, MSan, or a nightly fuzz budget.
   The native TSK, libewf, and libyal parser surfaces were not mutation-fuzzed in
   this pass.
@@ -204,9 +207,11 @@ tests. `qmllint` exited 0 without diagnostics.
 - Differential coverage is limited to MBR, GPT, ext4, one E01 stream, and
   SHA-256 on this host. NTFS, FAT32, exFAT, segmented E01 edge cases, and
   feature matrices remain additional coverage work.
-- Audit and SQLite writes are separate resources. If the audit append fails
-  after the database commit, the API returns
-  `audit.append_after_commit`; it does not claim a cross-resource transaction.
+- Audit and SQLite writes are separate resources. The audit event is now queued
+  in the same transaction as the database row and replayed into the chain, so a
+  failed append leaves a recoverable event rather than lost history. The API
+  still returns `audit.append_after_commit` because the state is committed at
+  that point; it does not claim a cross-resource atomic transaction.
 - The local audit hash chain is not externally notarized.
 - The extraction replacement test is bounded deterministic stress, not a
   scheduler-driven high-frequency race campaign.

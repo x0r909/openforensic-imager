@@ -1,6 +1,6 @@
 # Installation, Removal, and Recovery
 
-Status: Phase 7 development packages, 2026-10-31.
+Status: Phase 8 development packages, 2026-10-31.
 
 The project license is undecided. The generated packages are development
 artifacts and are not licensed for redistribution. The icon and maintainer
@@ -8,7 +8,7 @@ address are placeholders.
 
 ## Artifact scope
 
-The Phase 7 build produces:
+The Phase 8 build produces:
 
 | Artifact | Intended use | Tested host |
 |---|---|---|
@@ -160,6 +160,7 @@ complete image or overwrite it with a retry.
 
 - The project license is not selected.
 - The application icon is a text placeholder.
-- Parser process isolation remains an open release blocker.
+- Evidence parsing runs in a same-user worker process. It is not a privilege
+  boundary against kernel or sandbox escapes.
 - The packages have not been installed on a clean VM or a secondary
   distribution.
