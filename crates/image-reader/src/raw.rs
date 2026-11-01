@@ -12,7 +12,6 @@ use crate::source::{
 };
 
 const DEFAULT_SECTOR_SIZE: u32 = 512;
-const BLKGETSIZE64: libc::c_ulong = 0x8008_1272;
 
 #[derive(Debug)]
 pub struct RawReader {
@@ -128,20 +127,28 @@ fn source_length(file: &File, metadata: &std::fs::Metadata) -> Result<u64, Image
         return Ok(metadata.len());
     }
 
-    let mut length = 0_u64;
-    // The descriptor remains owned by `file`; the ioctl only reads capacity.
-    let result = unsafe {
-        libc::ioctl(
-            std::os::fd::AsRawFd::as_raw_fd(file),
-            BLKGETSIZE64,
-            &mut length,
-        )
-    };
-    if result == 0 {
-        Ok(length)
-    } else {
-        Err(map_io_error(io::Error::last_os_error()))
+    // `ioctl(BLKGETSIZE64)` is the direct way to ask a block device its
+    // capacity, and this used to issue it — but the acquisition runs inside the
+    // worker, whose seccomp filter is a default-deny allow-list that omits
+    // `ioctl`, so the call came back `EPERM` and *every* physical acquisition
+    // failed at the first read, before any evidence. `stat` reports a block
+    // device's size as zero, so `metadata.len()` cannot stand in for it either.
+    //
+    // `lseek` is on that allow-list and answers the same question: `SEEK_END` on
+    // a block device is its size in bytes, the same value `BLKGETSIZE64`
+    // returns. Using it keeps the worker's filter as strict as it was rather
+    // than widening it to admit every ioctl — of which some change device state,
+    // which a read-only acquisition must never do. The descriptor remains owned
+    // by `file`; `lseek` only reads the length.
+    //
+    // This test is only reachable for a block device, so no regular-file
+    // fixture exercises it; it is covered by an opt-in end-to-end test in
+    // `crates/native-bindings/tests/worker_isolation.rs`.
+    let length = unsafe { libc::lseek(std::os::fd::AsRawFd::as_raw_fd(file), 0, libc::SEEK_END) };
+    if length < 0 {
+        return Err(map_io_error(io::Error::last_os_error()));
     }
+    Ok(length as u64)
 }
 
 fn map_open_error(error: io::Error) -> ImageError {

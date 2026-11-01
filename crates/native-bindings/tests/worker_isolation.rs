@@ -738,3 +738,98 @@ fn an_ewf_segment_larger_than_the_default_file_size_limit_is_written() {
         "the segment overflowed the maximum it was configured with: {segment_bytes}"
     );
 }
+
+/// A physical block device is acquired through the worker, not refused by its
+/// filter.
+///
+/// The worker confines itself with a default-deny seccomp filter, and `ioctl`
+/// is deliberately not on the allow-list ("Closed by omission: ... `ioctl`" in
+/// `worker-sandbox`). `RawReader::source_length` measured a block device with
+/// `ioctl(BLKGETSIZE64)` anyway — and `stat` reports a block device's size as
+/// zero, so `metadata.len()` cannot stand in for it. The filter therefore
+/// answered that one syscall with `EPERM`, and physical acquisition — ACQ-001,
+/// a `Must` — failed at the first read of the device's capacity, before any
+/// evidence was read. A regular-file test cannot see this: the ioctl branch is
+/// only reached for a block device, and every other acquisition fixture is a
+/// file.
+///
+/// The test runs only where a device is supplied, because a block device needs
+/// a privilege the suite does not have:
+///
+/// ```text
+/// OFI_BLOCK_DEVICE_TEST_PATH=/dev/loopN cargo test -p native-bindings \
+///     --test worker_isolation block_device_acquisition
+/// ```
+///
+/// Skipping loudly is deliberate: a device path that silently reports success
+/// when it never ran is the failure mode this test exists to end.
+#[test]
+fn a_block_device_is_acquired_through_the_worker_filter() {
+    let Some(source) = std::env::var_os("OFI_BLOCK_DEVICE_TEST_PATH").map(PathBuf::from) else {
+        eprintln!(
+            "skipping a_block_device_is_acquired_through_the_worker_filter: set \
+             OFI_BLOCK_DEVICE_TEST_PATH to a readable block device"
+        );
+        return;
+    };
+
+    // The size is read with the same call the worker under test must make, so
+    // the assertion below does not restate a number typed into the test.
+    let expected_length = {
+        use std::os::fd::AsRawFd;
+        let file = std::fs::File::open(&source)
+            .unwrap_or_else(|error| panic!("cannot open {source:?}: {error}"));
+        let length = unsafe { libc::lseek(file.as_raw_fd(), 0, libc::SEEK_END) };
+        assert!(length > 0, "device reported a non-positive length: {length}");
+        length as u64
+    };
+
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    let mut environment = EnvironmentGuard::new();
+    // The device is hashed four times over, which is real work even at 16 MiB.
+    unsafe { environment.set("OFI_WORKER_TIMEOUT_SECS", "300") };
+
+    let directory = tempdir().unwrap();
+    let destination = directory.path().join("destination");
+    std::fs::create_dir(&destination).unwrap();
+    let request = serde_json::json!({
+        "operation": "acquisition",
+        "source_path": source,
+        "destination_dir": destination,
+        "base_name": "device",
+        "format": "raw",
+        "options": {
+            "block_size": 1048576,
+            "maximum_segment_size": 134217728,
+            "compression": "none",
+            "verify_after": false
+        }
+    });
+
+    let mut manager: *mut ofi_job_manager = ptr::null_mut();
+    let mut error = ptr::null_mut();
+    assert_eq!(
+        unsafe { ofi_job_manager_new(1, &mut manager, &mut error) },
+        ofi_status::OFI_STATUS_OK
+    );
+    let job_id = unsafe { submit(manager, &request) }.unwrap();
+    let snapshot = wait_for_job_within(manager, &job_id, Duration::from_secs(300));
+    unsafe { ofi_job_manager_free(manager) };
+
+    assert_ne!(
+        snapshot["body"]["status"], "failed",
+        "a block device must be acquirable: {snapshot}"
+    );
+    assert_eq!(
+        snapshot["body"]["result"]["manifest"]["bytes_written"], expected_length,
+        "the image must hold every byte the device reports: {snapshot}"
+    );
+    let manifest_path = PathBuf::from(
+        snapshot["body"]["result"]["manifest_path"]
+            .as_str()
+            .expect("the acquisition reported a manifest path"),
+    );
+    let written =
+        std::fs::metadata(manifest_path.parent().unwrap().join("device.raw")).unwrap().len();
+    assert_eq!(written, expected_length, "the image on disk must be the whole device");
+}
