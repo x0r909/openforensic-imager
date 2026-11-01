@@ -474,7 +474,24 @@ security gate remains open.
   byte-reproducible by design, so this needs a metadata comparison, not a digest
   match.
 - [ ] Run a packaged physical-device acquisition with a hardware write blocker.
-  Requires: a write blocker, a source device, and a release artifact.
+  Blocked on hardware, and the procedure is written:
+  [docs/testing/device-acquisition-runbook.md](docs/testing/device-acquisition-runbook.md).
+  Requires: a hardware write blocker; an expendable source device and a
+  destination filesystem with free space at least the source's full capacity (a
+  raw acquisition writes every byte); a release artifact built from the commit
+  under test, or an installed package; and read access to the device node for
+  the running account. **Known gaps to schedule, not to discover during the
+  run:** ACQ-006 (write-blocker attestation warning and report field) and
+  ACQ-007 (mounted or write-held device requires an explicit audited decision)
+  are `Must` and are not implemented — a grep over `crates/` and `apps/` finds
+  no mount-table read and no write-blocker string — and ACQ-018 (reject a source
+  and destination on the same writable device) is likewise absent, so the
+  operator is currently their only enforcement point.
+  The block-device capacity read inside the worker's seccomp filter is covered
+  by an opt-in regression test
+  (`OFI_BLOCK_DEVICE_TEST_PATH` + `a_block_device_is_acquired_through_the_worker_filter`
+  in `crates/native-bindings/tests/worker_isolation.rs`); a loop device is not
+  physical media, so that test does not tick this box.
 
 Phase 7 is complete as a locally tested development packaging increment. A
 production distribution gate remains open until the clean-system,

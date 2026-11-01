@@ -36,7 +36,7 @@ state after Phase 4. The desktop UI and later workflow modules are not complete.
 | Text view | Yes | Unknown | Yes | Tested bounded core model | Encoding and budget tests |
 | Image preview | Via natural mode | Unknown | Yes, bounded | Partial: preflight only | Image bomb tests |
 | PDF preview | Not established | Unknown | Optional, safe | Partial: size preflight only | Isolated parser tests |
-| Physical acquisition | Yes | Unknown | Yes, with write blocker | Not implemented | Injected read-error tests |
+| Physical acquisition | Yes | Unknown | Yes, with write blocker | Partial: block-device capacity and read path work inside the worker filter (loop-device test); no physical media or write-blocker run, and ACQ-006/007/018 not implemented | Device runbook and injected read-error tests |
 | Logical acquisition | Yes | Unknown | Yes | Not implemented | Source policy tests |
 | RAW output | Yes | Unknown | Yes | Tested for regular-file sources | Byte equality and hash tests |
 | E01 output | Yes | Unknown | Yes, EWF1 | Tested for regular-file sources | libewf and differential tests |
