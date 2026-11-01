@@ -1,0 +1,70 @@
+.TH OPENFORENSIC-IMAGER 8 "2026-11-01" "OpenForensic Imager 0.1.0" "System Administration"
+.SH NAME
+openforensic-imager \- Linux-native forensic acquisition and evidence analysis
+.SH SYNOPSIS
+.B openforensic-imager
+.RI [ options ]
+.SH DESCRIPTION
+.B openforensic-imager
+is a graphical workbench for acquiring and analysing digital evidence. It
+creates and verifies RAW and EWF1 images, analyses MBR and GPT partition
+tables, browses supported filesystems through The Sleuth Kit, and records case
+metadata and audit events.
+.PP
+The application is controlled through its window; the options below exist for
+scripted checks and troubleshooting. Evidence-facing operations do not run in
+this process. Each one is dispatched to
+.BR ofi-parser-worker (8),
+which opens the evidence and returns the result.
+.SH OPTIONS
+.TP
+.B \-\-self\-test
+Load the interface, confirm that the QML scene builds, and exit. A non-zero
+exit status means the interface failed to load. This is what the packaged
+self-test runs and what a clean-install check calls.
+.TP
+.B \-\-screenshot \fIPATH\fR
+Save a window screenshot to
+.I PATH
+and exit.
+.TP
+.B \-\-dark
+Start with the dark theme.
+.TP
+.B \-\-help
+Print the option summary and exit.
+.TP
+.B \-\-version
+Print the version and exit.
+.SH ENVIRONMENT
+.TP
+.B QT_QPA_PLATFORM
+Set to
+.B offscreen
+to run
+.B \-\-self\-test
+without a display server. This is how the packaging tests exercise the
+application in a build environment that has no session.
+.TP
+.B OFI_PARSER_WORKER
+Overrides the path to the parser worker. Honoured only in debug builds, so a
+release binary always uses the worker installed beside it. It exists so tests
+can point the dispatcher at a build artifact.
+.SH FILES
+.TP
+.I /usr/lib/openforensic-imager/libnative_bindings.so
+The native core: evidence readers, hashing, the case database, and the audit
+log.
+.TP
+.I /usr/bin/ofi-parser-worker
+The isolated parser worker.
+.SH SEE ALSO
+.BR ofi-parser-worker (8)
+.SH DOCUMENTATION
+.I /usr/share/doc/openforensic-imager/SECURITY_MODEL.md
+describes the trust boundaries, including what the parser worker sandbox does
+and does not protect against.
+.I /usr/share/doc/openforensic-imager/THIRD_PARTY.md
+lists the third-party components and their licenses.
+.SH AUTHOR
+x0r909 <openforensic-imager@users.noreply.github.com>

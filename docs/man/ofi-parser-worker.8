@@ -1,0 +1,49 @@
+.TH OFI-PARSER-WORKER 8 "2026-11-01" "OpenForensic Imager 0.1.0" "System Administration"
+.SH NAME
+ofi-parser-worker \- isolated parser worker for OpenForensic Imager
+.SH SYNOPSIS
+.B ofi-parser-worker
+.SH DESCRIPTION
+.B ofi-parser-worker
+executes the operations that touch evidence. It reads one JSON job request
+from standard input, performs the job, and writes one JSON response to standard
+output. It is not meant to be run by hand; the application starts one process
+per job and reads the response.
+.PP
+Each process serves exactly one request. Before the job runs, the worker
+applies, in order: resource limits, a Landlock path allowlist built from the
+request's own paths, and a default-deny seccomp syscall filter. It also sets
+.B PR_SET_NO_NEW_PRIVS
+before either filter, so nothing it does can gain privileges it did not hold.
+.PP
+The worker refuses the three operations that do not parse evidence content
+\(em \fBevidence_list\fR, \fBauditAppend\fR, and \fBauditVerify\fR \(em with the
+error code
+.BR worker.unsupported_operation .
+Those belong to the trusted process. The refusal fails closed in both
+directions: the trusted process will not parse evidence, and the worker will
+not touch the case database.
+.PP
+The process is single-request by design, so a parser defect cannot persist
+across jobs: the application cancels a job by killing the worker's process
+group, and the next job starts from a fresh process.
+.SH EXIT STATUS
+.TP
+.B 0
+The request was read and a response was written. A response can still carry a
+job error; the exit status describes the worker, not the job.
+.TP
+.B 1
+The worker could not write a response, for example if no request arrived on
+standard input.
+.SH SECURITY
+The worker is confined, but it is not a privilege boundary. It runs as the
+invoking user, so a kernel or sandbox escape, or a defect in a native parser
+that yields arbitrary code execution, compromises that user's authority rather
+than a lesser one. See
+.I /usr/share/doc/openforensic-imager/SECURITY_MODEL.md
+for the boundaries and the residual risks that remain accepted.
+.SH SEE ALSO
+.BR openforensic-imager (8)
+.SH AUTHOR
+x0r909 <openforensic-imager@users.noreply.github.com>

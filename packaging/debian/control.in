@@ -3,7 +3,7 @@ Version: @VERSION@-1
 Section: utils
 Priority: optional
 Architecture: amd64
-Maintainer: OpenForensic Imager Maintainers <maintainer@invalid>
+Maintainer: x0r909 <openforensic-imager@users.noreply.github.com>
 Depends: @DEPENDS@
 Installed-Size: @INSTALLED_SIZE@
 Homepage: https://github.com/x0r909/openforensic-imager

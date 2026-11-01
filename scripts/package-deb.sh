@@ -35,6 +35,7 @@ fi
 
 stage="$repo_root/packaging/build/deb-root"
 ofi_stage_release "$stage"
+ofi_strip_stage "$stage"
 
 app="$stage/usr/bin/openforensic-imager"
 native="$stage/usr/lib/openforensic-imager/libnative_bindings.so"
@@ -47,10 +48,13 @@ doc_dir="$stage/usr/share/doc/openforensic-imager"
 sbom="$ofi_output_dir/openforensic-imager-${ofi_version}.cdx.json"
 "$repo_root/scripts/generate-sbom.sh" \
     "$sbom" "$app" "$native" >/dev/null
-cp "$sbom" "$doc_dir/sbom.cdx.json"
+install -Dm644 "$sbom" "$doc_dir/sbom.cdx.json"
 (
     cd "$doc_dir"
+    # The redirect honours the builder's umask, and the mode is stored in the
+    # archive, so set it explicitly for a mode-reproducible build.
     sha256sum sbom.cdx.json >sbom.cdx.json.sha256
+    chmod 0644 sbom.cdx.json.sha256
 )
 
 mkdir -p "$stage/DEBIAN"
