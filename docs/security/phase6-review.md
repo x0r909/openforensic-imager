@@ -106,7 +106,31 @@ Recommendation: run ASan, MSan where applicable, and a scheduled fuzz budget on
 a pinned nightly toolchain. Include TSK, libewf, EWF metadata, image
 identification, and worker RPC mutation targets.
 
-Status: Open. No sanitizer or long-duration fuzz coverage is claimed.
+Status: Resolved on the tested host. The toolchain condition this finding named
+is gone: nightly Rust is installed with `rust-src` and `llvm-tools`, and both
+fuzz targets build under `-Zsanitizer`. Measured coverage is recorded in
+[`../testing/phase9-results.md`](../testing/phase9-results.md):
+
+- AddressSanitizer over the whole workspace: exit 0, 69 suites, 166 tests, no
+  ASan report, leak checking on with third-party C allocations suppressed.
+- MemorySanitizer over the five crates that link no C code
+  (`forensic-core`, `hashing`, `viewer`, `audit-log`, `worker-sandbox`): exit 0,
+  18 suites, 53 tests, no report.
+- A ten-minute-per-target fuzz budget on `c_abi_json` and `viewer_pages`, both
+  to completion with no artifact: 10,439,152 and 32,820,070 executions, peak RSS
+  512–529 MB against a 4 GiB ceiling.
+
+What this does not cover, and why it is not claimed: TSK, libewf, and the
+bundled SQLite are uninstrumented C, so ASan intercepts their allocator use but
+not their own reads and writes; MSan is scoped to the crates above because its
+shadow tracking stops at an uninstrumented library boundary and would otherwise
+report false positives; the Qt/QML desktop is a CMake target with no sanitizer
+flags wired in; and a fixed fuzz budget is a floor, not a proof — coverage had
+plateaued at the end of both runs, which shows the budget was spent, not that
+the parsers are exhaustively tested. The multi-terabyte soak and long-duration
+memory stability check is still unrun: it needs release hardware with
+multi-terabyte storage and remains open in `IMPLEMENTATION_PLAN.md`, and it stays
+on the residual-risk list below.
 
 ### P6-SEC-004: Audit chain is not externally notarized
 
@@ -139,7 +163,10 @@ defects are resolved.
 
 - Native parser defects are contained by a separate worker process, but the
   worker is not a privilege boundary against kernel or sandbox escapes.
-- Short fuzz smoke runs do not establish parser safety.
+- A fixed fuzz budget does not establish parser safety. Ten minutes per target
+  with no artifact bounds the defect classes those two targets can reach; TSK,
+  libewf, and the bundled SQLite are uninstrumented C, and the Qt desktop is not
+  sanitized at all.
 - The 8 GiB sparse capacity test does not establish multi-terabyte throughput
   or long-duration memory stability.
 - TSK 4.12.1 and the host libewf package are validated only on this host.
@@ -157,8 +184,24 @@ defects are resolved.
 The tested Phase 6 controls have no failing test and `cargo-audit` reported no
 known vulnerability. Phase 8 resolves the parser dispatch portion of
 P6-SEC-001. The database/audit two-resource window (P6-SEC-002) is resolved by
-the durable outbox.
+the durable outbox. P6-SEC-003 is now resolved on the tested host: ASan, a
+scoped MSan, and a ten-minute fuzz budget per target all completed with no
+report, no artifact, and no memory growth toward the ceiling, and
+`scripts/fuzz-budget.sh` makes the budget repeatable rather than a one-off.
 
-The release security gate is still not fully passed because sanitizer coverage
-was not run on this host and the worker is not a privilege boundary against a
-kernel or sandbox escape.
+Two parts of the gate still do not pass, and neither is closed by the sanitizer
+evidence:
+
+- **The worker is not a privilege boundary against a kernel or sandbox escape.**
+  The seccomp allow-list, the age-and-liveness reaper, and per-segment EWF read
+  grants all narrow what a compromised parser can reach, but a compromise still
+  runs as the examiner's uid. `docs/security/worker-privilege-boundary.md`
+  assesses four options and recommends a dedicated system user for the DEB;
+  that recommendation is **not implemented**, so the gate stays open.
+- **Long-duration acquisition on release hardware is unrun.** A fixed fuzz
+  budget and a sanitizer pass say nothing about multi-terabyte throughput or
+  memory stability over hours.
+
+Sanitizer coverage is therefore evidence that a class of defect was looked for
+and not found. It is not a certification, and this paragraph is not a
+declaration that the release gate has passed.

@@ -406,8 +406,14 @@ views, and full accessibility-tree testing remain open.
 - [x] Record open security findings and residual risk in
   [docs/security/phase6-review.md](docs/security/phase6-review.md).
 - [x] Wire the tested worker sandbox into parser dispatch. Completed in Phase 8.
-- [ ] Run ASan, MSan, and a scheduled fuzz budget on nightly Rust.
-  Requires: a rustup-installed nightly toolchain. This host has none.
+- [x] Run ASan, MSan, and a scheduled fuzz budget on nightly Rust. Done in
+  Phase 9: ASan over the whole workspace and MSan over the five crates that link
+  no C code, both exit 0, plus a ten-minute-per-target fuzz budget with no
+  artifact. Evidence:
+  [docs/testing/phase9-results.md](docs/testing/phase9-results.md). The budget is
+  made repeatable by `scripts/fuzz-budget.sh`; nothing schedules it
+  automatically yet, so it is run by hand (`TEST_STRATEGY.md` section 11 names
+  the nightly tier it belongs to).
 - [ ] Run multi-terabyte acquisition and long-duration soak tests on release
   hardware.
   Requires: release hardware with multi-terabyte storage.
@@ -503,17 +509,23 @@ cross-distribution, licensing, native dependency pinning, and device tests pass.
 - [x] Kill the worker process group on cancellation and timeout.
 - [x] Add crash-containment, cancellation, timeout, EWF worker, and package
   worker tests.
-- [ ] Run sanitizer builds and a scheduled fuzz budget.
-  Requires: nightly toolchain (see Phase 6).
+- [x] Run sanitizer builds and a scheduled fuzz budget. Done in Phase 9; see the
+  Phase 6 item above and
+  [docs/testing/phase9-results.md](docs/testing/phase9-results.md). The
+  scheduling half is stated but not executed: there is no CI configuration and
+  no committed unit file, so a maintainer runs `scripts/fuzz-budget.sh`.
 - [ ] Install and exercise packages on clean VMs and secondary distributions.
   Requires: disposable VMs per distribution.
 - [ ] Complete pinned native dependency and licensing review.
   Requires: the project license decision.
 
 Phase 8 closes the parser-dispatch portion of P6-SEC-001 on the local host. The
-production security and distribution gates remain open for sanitizer evidence,
-clean-system testing, native dependency pinning, and licensing. The executable
-results are recorded in
+sanitizer and fuzz evidence landed in Phase 9; the production security and
+distribution gates remain open for clean-system testing, the worker's
+privilege-boundary decision (`docs/security/worker-privilege-boundary.md`
+recommends a dedicated system user and is not implemented), multi-terabyte
+soak, native dependency pinning, and licensing. The executable results are
+recorded in
 [`docs/testing/phase8-results.md`](docs/testing/phase8-results.md).
 
 ### Phase 8 security fixes
