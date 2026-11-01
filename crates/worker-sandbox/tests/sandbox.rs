@@ -44,7 +44,7 @@ fn missing_policy_path_is_rejected_before_restriction() {
 
 #[test]
 fn sandboxed_child_cannot_read_outside_allowlist_or_open_network() {
-    let status = std::process::Command::new(std::env::current_exe().unwrap())
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
         .args([
             "--exact",
             "sandbox_child",
@@ -56,14 +56,28 @@ fn sandboxed_child_cannot_read_outside_allowlist_or_open_network() {
         // is confined by exactly the seccomp filter that denies both. Address
         // sanitization still applies; only the leak scan is off in this process.
         .env("ASAN_OPTIONS", "detect_leaks=0")
-        .status()
+        .output()
         .unwrap();
-    assert!(status.success());
+    // A pipe rather than the inherited descriptor, for the reason given on
+    // `file_size_breach_is_a_typed_error_not_a_signal`: a child that lowers
+    // `RLIMIT_FSIZE` must not have its harness writing into a regular file that
+    // is already past the limit.
+    assert!(
+        output.status.success(),
+        "the confined child failed: {}\nstdout:\n{}\nstderr:\n{}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
 }
 
 #[test]
 fn resource_limits_are_applied_before_parsing() {
-    let status = std::process::Command::new(std::env::current_exe().unwrap())
+    // This child carries `parser_default()`'s 64 MiB `RLIMIT_FSIZE`, so an
+    // inherited stdout that is a regular file larger than that would trip the
+    // limit on the harness's own progress line — the same defect as the 4 KiB
+    // sibling, at a larger threshold.
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
         .args([
             "--exact",
             "resource_limit_child",
@@ -71,9 +85,15 @@ fn resource_limits_are_applied_before_parsing() {
             "--test-threads=1",
         ])
         .env("OFI_RESOURCE_LIMIT_CHILD", "1")
-        .status()
+        .output()
         .unwrap();
-    assert!(status.success());
+    assert!(
+        output.status.success(),
+        "the limited child failed: {}\nstdout:\n{}\nstderr:\n{}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
 }
 
 #[test]
@@ -91,6 +111,69 @@ fn address_space_limit_survives_the_sanitizer_requirement() {
     } else {
         assert_eq!(limits.address_space_bytes, 4 * 1024 * 1024 * 1024);
     }
+}
+
+/// A write past `RLIMIT_FSIZE` must reach the caller as an error, not as a
+/// signal.
+///
+/// `RLIMIT_FSIZE` is mandated by `SECURITY_MODEL.md` §7, and §9 requires that
+/// every limit breach be "a typed error or partial result". The kernel's
+/// default disposition for the breach is SIGXFSZ, which terminates the process
+/// — a worker killed that way emits no response at all, so the parent reports
+/// `worker.crashed` and the partial output is unexplained. Ignoring SIGXFSZ
+/// instead makes the same write fail with `EFBIG`, which the acquisition sink
+/// already maps to a typed error.
+///
+/// The child is given pipes, not the inherited file descriptors. It lowers
+/// `RLIMIT_FSIZE` to 4 KiB, and an inherited stdout that is a regular file — a
+/// `cargo test --workspace > log` redirect, which is exactly how the suite is
+/// run — is already past that limit, so the harness's own progress line trips
+/// the limit under test before the child reaches its subject write. A pipe is
+/// also the shape production uses: the parent spawns the worker with
+/// `Stdio::piped()`, and `RLIMIT_FSIZE` does not govern pipes.
+#[test]
+fn file_size_breach_is_a_typed_error_not_a_signal() {
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "file_size_child",
+            "--nocapture",
+            "--test-threads=1",
+        ])
+        .env("OFI_FILE_SIZE_CHILD", "1")
+        .output()
+        .unwrap();
+    // `ExitStatus` renders a signal as "signal: 25 (SIGXFSZ)" and a panic as an
+    // exit code, so the message names what actually happened rather than
+    // asserting the mechanism the test exists to rule out.
+    assert!(
+        output.status.success(),
+        "the child did not report EFBIG: {}\nstdout:\n{}\nstderr:\n{}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr),
+    );
+}
+
+#[test]
+fn file_size_child() {
+    if std::env::var_os("OFI_FILE_SIZE_CHILD").is_none() {
+        return;
+    }
+    // A budget far below what this child is about to write.
+    let mut limits = ResourceLimits::parser_default();
+    limits.file_size_bytes = 4096;
+    apply_resource_limits(&limits).unwrap();
+
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("output");
+    let error = std::fs::write(&path, vec![0x41_u8; 8192]).unwrap_err();
+    assert_eq!(
+        error.raw_os_error(),
+        Some(libc::EFBIG),
+        "expected the breach to surface as EFBIG, got {error:?}"
+    );
+    assert_eq!(std::fs::metadata(&path).unwrap().len(), 4096);
 }
 
 #[test]
