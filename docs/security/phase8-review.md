@@ -34,7 +34,7 @@ boundary fails closed in both directions.
 | Diagnostic bound | `MAX_STDERR_BYTES` (64 KiB) | Bounded stderr capture, surfaced only on `worker.crashed` |
 | Wall-clock watchdog | `DEFAULT_TIMEOUT_SECONDS` (1 h), `MAX_TIMEOUT_SECONDS` (24 h) | The worker process group is killed on expiry |
 | Environment | `WORKER_ENVIRONMENT_ALLOWLIST` | `env_clear()` plus a small allowlist; no inherited credentials |
-| Resource limits | `worker_sandbox::ResourceLimits` | `RLIMIT_CORE` 0, `RLIMIT_AS` 4 GiB, `RLIMIT_CPU` 1 h, `RLIMIT_NOFILE` 256, `RLIMIT_FSIZE` 64 MiB |
+| Resource limits | `worker_sandbox::ResourceLimits` | `RLIMIT_CORE` 0, `RLIMIT_AS` 4 GiB, `RLIMIT_CPU` 1 h, `RLIMIT_NOFILE` 256, `RLIMIT_FSIZE` per job (`file_size_limits`), 64 MiB floor; `SIGXFSZ` ignored so a breach is `EFBIG`, not a kill |
 | Environment allowlist | `WORKER_ENVIRONMENT_ALLOWLIST` | `LANG`, `LC_ALL`, `LC_CTYPE`, `TZ`, `TZDIR`, `LIBEWF_VERBOSE` only |
 | Path allowlist | `worker_sandbox::apply_landlock` | Read roots from the evidence path only — each EWF segment named individually; write roots from the request's own output fields |
 | Syscall filter | `worker_sandbox::apply_seccomp_restrictions` | `SYS_seccomp` with `SECCOMP_FILTER_FLAG_TSYNC`; default-deny allow-list, so network, process creation, execution, ptrace, and any unlisted syscall get `EPERM` |
@@ -68,11 +68,15 @@ is parsed. There is no silent reduced-assurance path.
    [worker-privilege-boundary.md](worker-privilege-boundary.md), which
    recommends a dedicated system user scoped to the DEB. That recommendation is
    **not implemented** — this risk stands, and the release gate stays open.
-2. **The response cap is enforced from both sides.** `read_bounded` stops at the
+2. **The response cap is enforced by the parent.** `read_bounded` stops at the
    first byte past `MAX_RESPONSE_BYTES` and the poll loop kills the worker group
    immediately, so a flooding worker cannot be drained to EOF or to the
-   wall-clock deadline. The worker's `RLIMIT_FSIZE` matches the same 64 MiB
-   budget, so it cannot emit more than the parent accepts.
+   wall-clock deadline. The cap does not depend on `RLIMIT_FSIZE`: the response
+   travels over a pipe, and `RLIMIT_FSIZE` does not apply to pipes.
+   `RLIMIT_FSIZE` bounds the files the worker writes — the evidence — and its
+   budget follows the job: `native_bindings` sizes it from the acquisition's
+   source length or EWF segment size, or the extraction file cap, before the
+   limits are applied.
 3. **The seccomp policy is now a default-deny allow-list.** The filter permits
    only the syscalls the worker was observed to issue and refuses everything
    else with `EPERM`, so a syscall added by a future kernel is denied rather

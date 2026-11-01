@@ -65,8 +65,23 @@ fn hashes_abc_with_known_vectors() {
     );
 }
 
+/// Whether the interpreter running this test can read the host filesystem.
+///
+/// Miri enforces isolation by default: `open` is unsupported, so this test
+/// cannot read the README or spawn `sha256sum`, and its failure would say
+/// nothing about the crate. The guard is the interpreter's own version string
+/// rather than `#[cfg(miri)]`, because Miri runs the same cfg-evaluated code
+/// path as a normal build and the test has to skip at runtime.
+fn host_filesystem_is_readable() -> bool {
+    !cfg!(miri)
+}
+
 #[test]
 fn sha256_matches_coreutils_on_repository_readme() {
+    if !host_filesystem_is_readable() {
+        eprintln!("skipped: the interpreter isolates the host filesystem");
+        return;
+    }
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../README.md");
     let bytes = std::fs::read(&path).unwrap();
     let mut hasher = StreamingHasher::new(&[HashAlgorithm::Sha256]);

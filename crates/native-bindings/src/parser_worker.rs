@@ -12,8 +12,8 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use acquisition::{
-    AcquisitionErrorCode, AcquisitionRequest, AcquisitionStatus, acquire_path_with_cancel,
-    verify_image,
+    AcquisitionErrorCode, AcquisitionRequest, AcquisitionStatus, OutputFormat,
+    acquire_path_with_cancel, verify_image,
 };
 use extraction::{ExtractionOptions, Extractor};
 use filesystem::{EvidenceFile, FileSystem};
@@ -143,7 +143,7 @@ fn process_request(bytes: &[u8]) -> WorkerResponse {
         Ok(policy) => policy,
         Err(error) => return WorkerResponse::error(error.code(), error.message().to_owned()),
     };
-    if let Err(error) = apply_resource_limits(&ResourceLimits::parser_default())
+    if let Err(error) = apply_resource_limits(&file_size_limits(&request))
         .and_then(|()| apply_landlock(&policy))
         .and_then(|()| apply_seccomp_restrictions())
     {
@@ -158,6 +158,65 @@ fn process_request(bytes: &[u8]) -> WorkerResponse {
         Ok(Err(error)) => WorkerResponse::from_error(error),
         Err(_) => WorkerResponse::error("worker.panic", "parser worker panicked"),
     }
+}
+
+/// Sizes the worker's `RLIMIT_FSIZE` from what the job says it will write.
+///
+/// The limit caps one file, and the files the worker creates are evidence. A
+/// raw acquisition writes its source verbatim, so the image is exactly the
+/// source length; an EWF acquisition rolls segments at
+/// `maximum_segment_size`, and libewf keeps every segment under it. Both are
+/// known before parsing starts — the reader that reports them is the same one
+/// the acquisition opens — so the budget can be derived here instead of guessed
+/// inside `ResourceLimits::parser_default`, which has no request to read.
+///
+/// It has to be set here rather than raised inside the limit itself: a process
+/// may lower its own soft limit freely but may only raise the hard limit back
+/// up to what it inherited, and the hard limit is what this sets. The worker
+/// serves one request per process, so this process's budget is this job's.
+///
+/// A job that declares nothing larger keeps the default floor. Extraction is
+/// bounded before it opens a destination — `ExtractionOptions` rejects an entry
+/// past `max_file_bytes` instead of writing into the limit — so its declared
+/// budget is the whole limit.
+fn file_size_limits(request: &JobRequest) -> ResourceLimits {
+    let mut limits = ResourceLimits::parser_default();
+    let declared = match request {
+        JobRequest::Acquisition {
+            source_path,
+            format,
+            options,
+            ..
+        } => match format {
+            OutputFormat::Raw => {
+                // A source the reader cannot size falls back to the default
+                // floor: the acquisition reports the failure itself, and a
+                // smaller limit cannot turn it into a different one.
+                acquisition_source_length(source_path).unwrap_or(limits.file_size_bytes)
+            }
+            OutputFormat::Ewf1E01 => options.maximum_segment_size,
+        },
+        JobRequest::ExtractFile { .. } | JobRequest::ExtractDirectory { .. } => {
+            ExtractionOptions::default().max_file_bytes
+        }
+        _ => limits.file_size_bytes,
+    };
+    // A declared bound of zero — an empty source, a truncated EWF header — is a
+    // request the job will reject on its own terms. Handing a zero to
+    // `apply_resource_limits` would make it a sandbox failure instead, which
+    // names the sandbox for a defect in the request.
+    limits.file_size_bytes = declared.max(1);
+    limits
+}
+
+/// The logical length the acquisition will read from `source_path`.
+///
+/// `open_image` picks the reader by signature, exactly as the acquisition does,
+/// so an EWF segment set and a raw file both report the length of the evidence
+/// rather than of the first segment on disk.
+fn acquisition_source_length(source_path: &str) -> Option<u64> {
+    let reader = open_image(Path::new(source_path)).ok()?;
+    Some(reader.logical_length())
 }
 
 fn prepare_output_paths(request: &JobRequest) -> Result<(), JobError> {

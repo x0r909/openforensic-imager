@@ -227,9 +227,18 @@ impl ResourceLimits {
             },
             cpu_seconds: 60 * 60,
             open_files: 256,
-            // Matches `MAX_RESPONSE_BYTES` in native-bindings: the worker cannot
-            // emit a response larger than the parent will ever accept, so the
-            // response cap is enforced from both sides.
+            // A floor, not the whole policy: `RLIMIT_FSIZE` caps one file the
+            // worker writes, and the worker writes evidence — a raw image is as
+            // large as its source and an EWF segment as large as the segment
+            // size the job asked for. `parser_default` has no request to read
+            // those from, so it carries a budget only the small writers stay
+            // under. native-bindings derives the real per-job budget and passes
+            // it to `apply_resource_limits`; see `file_size_limits`.
+            //
+            // It does *not* bound the worker's response. The response travels
+            // over a pipe, and `RLIMIT_FSIZE` does not apply to pipes. The
+            // parent enforces `MAX_RESPONSE_BYTES` on its own, by reading at
+            // most that much and killing the worker past it.
             file_size_bytes: 64 * 1024 * 1024,
         }
     }
@@ -273,6 +282,34 @@ pub fn apply_resource_limits(limits: &ResourceLimits) -> Result<(), SandboxError
         limits.file_size_bytes,
         "RLIMIT_FSIZE",
     )?;
+    ignore_file_size_signal()?;
+    Ok(())
+}
+
+/// Makes a write past `RLIMIT_FSIZE` fail with `EFBIG` instead of killing the
+/// worker with `SIGXFSZ`.
+///
+/// The kernel raises `SIGXFSZ` on the write that crosses the limit, and its
+/// default disposition terminates the process. A worker killed that way reports
+/// nothing at all, so the parent can only describe it as a crash — which is not
+/// the "typed error or partial result" SECURITY_MODEL.md §9 requires of every
+/// limit breach, and which leaves the partial output on disk unexplained. With
+/// the signal ignored the same write returns `EFBIG` ("File too large") to the
+/// caller, where the writers that can reach the limit already turn an io error
+/// into a typed failure. The bytes written before the limit are kept.
+///
+/// Ignoring the disposition is safe here because the worker executes nothing:
+/// it is the last process in its job, so an inherited disposition reaches no
+/// other program.
+fn ignore_file_size_signal() -> Result<(), SandboxError> {
+    // SAFETY: `sigaction` is a plain aggregate of integers and a handler
+    // address; a zeroed one with `SIG_IGN` is a valid disposition, and the old
+    // disposition is not read back.
+    let mut action: libc::sigaction = unsafe { std::mem::zeroed() };
+    action.sa_sigaction = libc::SIG_IGN;
+    if unsafe { libc::sigaction(libc::SIGXFSZ, &action, std::ptr::null_mut()) } != 0 {
+        return Err(last_error("sigaction(SIGXFSZ) failed"));
+    }
     Ok(())
 }
 

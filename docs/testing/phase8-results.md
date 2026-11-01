@@ -55,7 +55,9 @@ Each was confirmed to fail against the pre-fix source before being accepted.
 - A cancelled acquisition reports `staging_path` and `retained` instead of
   discarding where its partial output went.
 - `OFI_PARSER_WORKER` is honoured only in debug builds.
-- `RLIMIT_FSIZE` for the worker is 64 MiB, matching the response cap.
+- `RLIMIT_FSIZE` for the worker bounds the evidence it writes, not its response:
+  the budget follows the job (`native_bindings::file_size_limits`) and a breach
+  reaches the caller as a typed `acquisition.failed`, not as `SIGXFSZ`.
 - The ABI minor version is now 2.
 
 ## Not covered
