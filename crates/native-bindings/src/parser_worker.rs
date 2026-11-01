@@ -776,6 +776,21 @@ impl WorkerResponse {
     }
 }
 
+/// Reports the read and write paths a request would be sandboxed with, without
+/// running anything.
+///
+/// The narrowness of the EWF grant is the point of the exercise, so a test has
+/// to be able to assert on the policy itself rather than on the job merely
+/// succeeding: a grant that silently widened back to the parent directory would
+/// pass every behavioural test. Gated like `OFI_PARSER_WORKER`, because handing
+/// callers a map of the sandbox is not a capability a release build needs.
+#[cfg(debug_assertions)]
+pub fn sandbox_paths_for_debug(request: &[u8]) -> Result<(Vec<PathBuf>, Vec<PathBuf>), String> {
+    let request: JobRequest = serde_json::from_slice(request).map_err(|error| error.to_string())?;
+    let policy = sandbox_policy(&request).map_err(|error| error.message().to_owned())?;
+    Ok((policy.read_paths, policy.write_paths))
+}
+
 fn sandbox_policy(request: &JobRequest) -> Result<SandboxPolicy, JobError> {
     let mut reads = BTreeSet::new();
     let mut writes = BTreeSet::new();
@@ -783,7 +798,7 @@ fn sandbox_policy(request: &JobRequest) -> Result<SandboxPolicy, JobError> {
         JobRequest::ImageIdentify { path }
         | JobRequest::PartitionAnalysis { path }
         | JobRequest::SourceSnapshot { path } => {
-            reads.insert(evidence_read_root(path)?);
+            reads.extend(evidence_read_paths(path)?);
         }
         JobRequest::FilesystemList { path, .. }
         | JobRequest::FilesystemOpen { path, .. }
@@ -793,7 +808,7 @@ fn sandbox_policy(request: &JobRequest) -> Result<SandboxPolicy, JobError> {
         | JobRequest::ExtractFile { path, .. }
         | JobRequest::ExtractDirectory { path, .. }
         | JobRequest::Verification { path, .. } => {
-            reads.insert(evidence_read_root(path)?);
+            reads.extend(evidence_read_paths(path)?);
         }
         JobRequest::Acquisition {
             source_path,
@@ -801,7 +816,7 @@ fn sandbox_policy(request: &JobRequest) -> Result<SandboxPolicy, JobError> {
             reports_dir,
             ..
         } => {
-            reads.insert(evidence_read_root(source_path)?);
+            reads.extend(evidence_read_paths(source_path)?);
             writes.insert(existing_path(destination_dir)?);
             if let Some(reports_dir) = reports_dir {
                 writes.insert(existing_path(reports_dir)?);
@@ -861,15 +876,49 @@ fn sandbox_policy(request: &JobRequest) -> Result<SandboxPolicy, JobError> {
     Ok(policy)
 }
 
-fn evidence_read_root(path: &str) -> Result<PathBuf, JobError> {
+/// The paths a reader has to reach to open `path`.
+///
+/// A non-EWF image is a single file. An EWF image is a `E01`/`E02`/… series
+/// that `EwfReader::open` discovers by itself, so each segment is named
+/// individually here rather than granting the directory that holds them:
+/// Landlock `PATH_BENEATH` accepts a regular file, and a directory grant would
+/// also expose every unrelated file beside the evidence to a compromised
+/// parser. Each segment is then canonicalised, which is what the LSM compares.
+///
+/// Whether the path is EWF is decided the same way `open_image` decides it —
+/// by file signature, not by extension. The two have to agree: a signature
+/// check here and an extension check there would disagree on a letter-suffixed
+/// segment such as `EAA`, or on an image whose extension does not match its
+/// contents, and the grant would then cover a set of files the parse does not
+/// use, or miss files it does.
+///
+/// A first segment whose siblings cannot be enumerated is a hard error, not a
+/// narrowed grant: `segment_paths` returns the set it could see, so an empty
+/// listing means the evidence itself is unreadable, and continuing would run
+/// the job under a policy that the parse is then certain to fail against.
+fn evidence_read_paths(path: &str) -> Result<Vec<PathBuf>, JobError> {
     let path = existing_path(path)?;
-    if is_ewf_path(&path) {
-        path.parent()
-            .map(Path::to_path_buf)
-            .ok_or_else(|| JobError::failed("worker.sandbox", "EWF image has no parent directory"))
-    } else {
-        Ok(path)
+    let is_ewf = libewf_bindings::is_ewf(&path).map_err(|error| {
+        JobError::failed(
+            "worker.sandbox",
+            format!("sandbox path is unreadable: {error}"),
+        )
+    })?;
+    if !is_ewf {
+        return Ok(vec![path]);
     }
+    let segments = libewf_bindings::segment_paths(&path);
+    if segments.is_empty() {
+        return Err(JobError::failed(
+            "worker.sandbox",
+            format!("EWF image has no readable segment: {}", path.display()),
+        ));
+    }
+    let mut resolved = Vec::with_capacity(segments.len());
+    for segment in segments {
+        resolved.push(existing_path(&segment.to_string_lossy())?);
+    }
+    Ok(resolved)
 }
 
 fn existing_path(path: &str) -> Result<PathBuf, JobError> {
@@ -890,16 +939,6 @@ fn output_root(path: &str) -> Result<PathBuf, JobError> {
         JobError::failed("worker.sandbox", "output directory has no parent directory")
     })?;
     existing_path(&parent.to_string_lossy())
-}
-
-fn is_ewf_path(path: &Path) -> bool {
-    let Some(extension) = path.extension().and_then(|extension| extension.to_str()) else {
-        return false;
-    };
-    let extension = extension.to_ascii_uppercase();
-    let bytes = extension.as_bytes();
-    extension == "EWF"
-        || (bytes.len() == 3 && bytes[0] == b'E' && bytes[1..].iter().all(u8::is_ascii_digit))
 }
 
 fn resolve_worker_path() -> Result<PathBuf, JobError> {

@@ -36,7 +36,7 @@ boundary fails closed in both directions.
 | Environment | `WORKER_ENVIRONMENT_ALLOWLIST` | `env_clear()` plus a small allowlist; no inherited credentials |
 | Resource limits | `worker_sandbox::ResourceLimits` | `RLIMIT_CORE` 0, `RLIMIT_AS` 4 GiB, `RLIMIT_CPU` 1 h, `RLIMIT_NOFILE` 256, `RLIMIT_FSIZE` 64 MiB |
 | Environment allowlist | `WORKER_ENVIRONMENT_ALLOWLIST` | `LANG`, `LC_ALL`, `LC_CTYPE`, `TZ`, `TZDIR`, `LIBEWF_VERBOSE` only |
-| Path allowlist | `worker_sandbox::apply_landlock` | Read roots from the evidence path only; write roots from the request's own output fields |
+| Path allowlist | `worker_sandbox::apply_landlock` | Read roots from the evidence path only — each EWF segment named individually; write roots from the request's own output fields |
 | Syscall filter | `worker_sandbox::apply_seccomp_restrictions` | `SYS_seccomp` with `SECCOMP_FILTER_FLAG_TSYNC`; default-deny allow-list, so network, process creation, execution, ptrace, and any unlisted syscall get `EPERM` |
 | Privilege escalation | `PR_SET_NO_NEW_PRIVS` | Set before Landlock and seccomp are installed |
 | Crash containment | `catch_unwind` in the worker | A panic becomes a `worker.panic` response, not a lost job |
@@ -87,9 +87,30 @@ is parsed. There is no silent reduced-assurance path.
    fail with `EPERM` in production rather than being silently permitted.
    `crates/worker-sandbox/tests/sandbox.rs` pins the difference by requiring
    `EPERM` from `setpriority`, which no deny-list would name.
-4. **The EWF read grant covers the image directory.** Sibling segments must be
-   openable, so a compromised worker can read unrelated files in that
-   directory.
+4. **The EWF read grant covers the image's segments, not its directory.**
+   `EwfReader::open` is handed only the first segment and discovers the rest
+   itself, so the sandbox used to grant the whole parent directory to make the
+   siblings reachable — and a compromised worker could therefore read every
+   unrelated file beside the evidence. `libewf_bindings::segment_paths` now
+   enumerates the image up front (exact stem match, `E01..E99` then `EAA..`,
+   any case, regular files only, so a symlink named like a segment cannot pull
+   its target into the grant), and `sandbox_policy` grants each segment
+   individually: Landlock `PATH_BENEATH` accepts a regular file.
+   `crates/native-bindings/tests/worker_isolation.rs` pins both halves — the
+   job still succeeds on a multi-segment image, and the policy names the
+   segments without naming the directory. Two decisions this depends on:
+   whether a path is EWF is decided by **file signature**, the same way
+   `open_image` decides it, rather than by extension, so a raw file named
+   `.E01` is granted as itself instead of sweeping up every `.E02` beside it;
+   and an image whose segments cannot be enumerated at all is a hard
+   `worker.sandbox` failure rather than a job run under a policy the parse is
+   certain to fail against. Narrowing does not make an incomplete image look
+   complete: with a later segment deleted the job still reports `partial`,
+   naming every unreadable byte range, and never `succeeded` — the same
+   result-honesty rule the rest of the acquisition path follows. The residual
+   is that the grant is computed once, before the parse, so segments present
+   when the policy is built are readable for the job's duration even after the
+   parse stops needing them.
 5. **Cancellation is delivered by SIGKILL, and staging orphans are now reaped.**
    The in-worker cancellation token is a fresh `CancellationToken::default()`,
    so `acquire_reader`'s cooperative check never fires. A cancelled acquisition

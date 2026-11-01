@@ -667,28 +667,74 @@ fn path_c_string(path: &Path, operation: &'static str) -> Result<CString, EwfErr
         .map_err(|_| EwfError::new(operation, "path contains a NUL byte"))
 }
 
+/// Every segment of the EWF image whose first segment is `first_segment`.
+///
+/// An EWF image is split across `E01`, `E02`, … (`E99` then `EAA`, `EAB`, …)
+/// siblings that share the first segment's stem. `EwfReader::open` is handed
+/// only the first name and libewf globs the rest itself, so any sandbox around
+/// a read has to know the whole set up front: the parser worker grants each
+/// returned path individually rather than the image's parent directory, which
+/// would also expose unrelated files beside the evidence.
+///
+/// Only files that exist are returned, and the result is sorted, so segment
+/// `E02` of a single-segment image is never named. `first_segment` is included
+/// when it exists; when it does not, the result is empty and the caller decides
+/// whether that is an error.
+pub fn segment_paths(first_segment: &Path) -> Vec<PathBuf> {
+    let Some(file_name) = first_segment.file_name() else {
+        return Vec::new();
+    };
+    let stem = match file_name.to_string_lossy().rsplit_once('.') {
+        Some((stem, extension)) if is_ewf_extension(extension) => stem.to_owned(),
+        _ => return Vec::new(),
+    };
+    segments_for_stem(first_segment.parent().unwrap_or_else(|| Path::new(".")), &stem)
+}
+
+/// Every regular file in `parent` named `<stem>.<ewf-extension>`.
+///
+/// The name has to match exactly, not by prefix: a broad prefix match would
+/// sweep up an unrelated `evidence-old.E01` sitting beside `evidence.E01` and
+/// hand the sandbox a read grant the evidence never needed.
+fn segments_for_stem(parent: &Path, stem: &str) -> Vec<PathBuf> {
+    let Ok(entries) = std::fs::read_dir(parent) else {
+        return Vec::new();
+    };
+    let mut segments = Vec::new();
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        let Some((candidate_stem, extension)) = name.rsplit_once('.') else {
+            continue;
+        };
+        if candidate_stem != stem || !is_ewf_extension(extension) {
+            continue;
+        }
+        // A directory whose name merely looks like a segment is not part of
+        // the image, and granting it would grant its whole subtree. Neither is
+        // a symlink: `DirEntry::file_type` does not follow it, and a caller
+        // that canonicalises the paths it gets back would otherwise inherit a
+        // grant on whatever the link points at, wherever that is.
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        if file_type.is_file() {
+            segments.push(entry.path());
+        }
+    }
+    segments.sort();
+    segments
+}
+
 fn discover_segments(target: &Path) -> Result<Vec<PathBuf>, EwfError> {
     let parent = target.parent().unwrap_or_else(|| Path::new("."));
     let file_name = target
         .file_name()
         .ok_or_else(|| EwfError::new("discover_segments", "target has no filename"))?;
-    let prefix = file_name.to_string_lossy();
-    let mut segments = Vec::new();
-    for entry in std::fs::read_dir(parent)
-        .map_err(|error| EwfError::new("discover_segments", error.to_string()))?
-    {
-        let entry = entry.map_err(|error| EwfError::new("discover_segments", error.to_string()))?;
-        let name = entry.file_name();
-        let name = name.to_string_lossy();
-        if name.starts_with(prefix.as_ref())
-            && name
-                .rsplit_once('.')
-                .is_some_and(|(_, extension)| is_ewf_extension(extension))
-        {
-            segments.push(entry.path());
-        }
-    }
-    segments.sort();
+    // The writer's target is the bare base name, so its `<name>.E01` segments
+    // derive from the whole file name rather than a stem with the extension
+    // already stripped.
+    let segments = segments_for_stem(parent, &file_name.to_string_lossy());
     if segments.is_empty() {
         return Err(EwfError::new(
             "discover_segments",

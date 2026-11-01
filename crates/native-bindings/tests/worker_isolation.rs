@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use std::ptr;
 use std::time::{Duration, Instant};
 
+use libewf_bindings::{EwfCompression, EwfWriteOptions, EwfWriter};
 use native_bindings::{
     ofi_bytes_free, ofi_error, ofi_error_free, ofi_job_manager, ofi_job_manager_free,
     ofi_job_manager_new, ofi_job_snapshot, ofi_job_submit, ofi_status,
@@ -185,6 +186,191 @@ fn worker_does_not_inherit_the_parent_environment() {
         std::env::set_var("OFI_PARSER_WORKER", worker_executable());
         ofi_job_manager_free(manager);
     }
+}
+
+/// The paths, out of a policy's read set, that live inside `root`. Filtered so
+/// the assertion does not depend on the unrelated grants the policy also
+/// carries (`/usr/share/zoneinfo`, `/etc/localtime`).
+fn reads_beneath(root: &Path, read_paths: &[PathBuf]) -> Vec<PathBuf> {
+    let root = std::fs::canonicalize(root).unwrap();
+    let mut paths: Vec<PathBuf> = read_paths
+        .iter()
+        .filter(|path| path.starts_with(&root))
+        .cloned()
+        .collect();
+    paths.sort();
+    paths
+}
+
+/// Residual risk 4 in docs/security/phase8-review.md: an EWF image is split
+/// across `E01`/`E02`/… siblings, and the grant used to cover the whole
+/// directory to reach them, exposing every unrelated file beside the evidence.
+///
+/// The grant must name each segment instead — enough for the job to succeed
+/// (both segments are readable), and no more (the directory is not).
+#[test]
+fn ewf_reads_are_granted_per_segment_and_not_per_directory() {
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    let directory = tempdir().unwrap();
+    let source = directory.path().join("source");
+    let media = vec![0x5a_u8; 5 * 1024 * 1024 / 2];
+    let mut writer = EwfWriter::create(
+        &source,
+        media.len() as u64,
+        EwfWriteOptions {
+            bytes_per_sector: 512,
+            sectors_per_chunk: 64,
+            maximum_segment_size: 1024 * 1024,
+            compression: EwfCompression::None,
+        },
+    )
+    .unwrap();
+    writer.write_all(&media).unwrap();
+    let segments = writer.finalize().unwrap();
+    assert!(
+        segments.len() > 1,
+        "the fixture has to span more than one segment to prove anything: {segments:?}"
+    );
+
+    let destination = directory.path().join("destination");
+    std::fs::create_dir(&destination).unwrap();
+    let request = serde_json::json!({
+        "operation": "acquisition",
+        "source_path": segments[0],
+        "destination_dir": destination,
+        "base_name": "copy",
+        "format": "ewf1_e01",
+        "options": {
+            "block_size": 4096,
+            "maximum_segment_size": 1048576,
+            "compression": "none",
+            "verify_after": true
+        }
+    });
+
+    let mut manager: *mut ofi_job_manager = ptr::null_mut();
+    let mut error = ptr::null_mut();
+    assert_eq!(
+        unsafe { ofi_job_manager_new(1, &mut manager, &mut error) },
+        ofi_status::OFI_STATUS_OK
+    );
+    let job_id = unsafe { submit(manager, &request) }.unwrap();
+    let snapshot = wait_for_job(manager, &job_id);
+    assert_eq!(
+        snapshot["body"]["status"], "succeeded",
+        "a per-segment grant must still read the whole image: {snapshot}"
+    );
+    unsafe { ofi_job_manager_free(manager) };
+
+    let encoded = serde_json::to_vec(&request).unwrap();
+    let (read_paths, _) = native_bindings::sandbox_paths_for_debug(&encoded).unwrap();
+
+    let mut expected: Vec<PathBuf> = segments
+        .iter()
+        .map(|segment| std::fs::canonicalize(segment).unwrap())
+        .collect();
+    expected.sort();
+    assert_eq!(
+        reads_beneath(directory.path(), &read_paths),
+        expected,
+        "the policy must grant the segments themselves"
+    );
+
+    let parent = std::fs::canonicalize(directory.path()).unwrap();
+    assert!(
+        !read_paths.contains(&parent),
+        "the grant widened back to the directory holding the evidence: {read_paths:?}"
+    );
+}
+
+/// Whether a path is EWF is decided by signature, the same way `open_image`
+/// decides it. An extension-only test would call a raw file named `.E01` EWF and
+/// sweep up every `.E02`, `.E03`, … beside it — files the reader never opens,
+/// granted to the parser anyway.
+#[test]
+fn an_ewf_extension_without_an_ewf_signature_does_not_widen_the_grant() {
+    let directory = tempdir().unwrap();
+    let image = directory.path().join("mislabelled.E01");
+    std::fs::write(&image, vec![0x11_u8; 8192]).unwrap();
+    let neighbour = directory.path().join("mislabelled.E02");
+    std::fs::write(&neighbour, vec![0x22_u8; 8192]).unwrap();
+
+    let request = serde_json::json!({
+        "operation": "image_identify",
+        "path": image,
+    });
+    let encoded = serde_json::to_vec(&request).unwrap();
+
+    let (read_paths, _) = native_bindings::sandbox_paths_for_debug(&encoded).unwrap();
+
+    assert_eq!(
+        reads_beneath(directory.path(), &read_paths),
+        vec![std::fs::canonicalize(&image).unwrap()],
+        "a file that only looks like a segment must be granted as itself: {read_paths:?}"
+    );
+}
+
+/// Narrowing the grant must not turn an incomplete evidence set into a silent
+/// result. An image whose later segment is gone must fail the job, not acquire
+/// the first segment and report success on a truncated copy.
+#[test]
+fn a_missing_ewf_segment_fails_the_job_instead_of_narrowing_it() {
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    let directory = tempdir().unwrap();
+    let source = directory.path().join("source");
+    let media = vec![0x5a_u8; 5 * 1024 * 1024 / 2];
+    let mut writer = EwfWriter::create(
+        &source,
+        media.len() as u64,
+        EwfWriteOptions {
+            bytes_per_sector: 512,
+            sectors_per_chunk: 64,
+            maximum_segment_size: 1024 * 1024,
+            compression: EwfCompression::None,
+        },
+    )
+    .unwrap();
+    writer.write_all(&media).unwrap();
+    let segments = writer.finalize().unwrap();
+    assert!(segments.len() > 1, "{segments:?}");
+    std::fs::remove_file(segments.last().unwrap()).unwrap();
+
+    let destination = directory.path().join("destination");
+    std::fs::create_dir(&destination).unwrap();
+    let request = serde_json::json!({
+        "operation": "acquisition",
+        "source_path": segments[0],
+        "destination_dir": destination,
+        "base_name": "copy",
+        "format": "ewf1_e01",
+        "options": {
+            "block_size": 4096,
+            "maximum_segment_size": 1048576,
+            "compression": "none",
+            "verify_after": true
+        }
+    });
+
+    let mut manager: *mut ofi_job_manager = ptr::null_mut();
+    let mut error = ptr::null_mut();
+    assert_eq!(
+        unsafe { ofi_job_manager_new(1, &mut manager, &mut error) },
+        ofi_status::OFI_STATUS_OK
+    );
+    let job_id = unsafe { submit(manager, &request) }.unwrap();
+    let snapshot = wait_for_job(manager, &job_id);
+    unsafe { ofi_job_manager_free(manager) };
+
+    assert_eq!(
+        snapshot["body"]["status"], "partial",
+        "a missing segment has to surface as a partial result, never as success: {snapshot}"
+    );
+    let manifest = &snapshot["body"]["result"]["manifest"];
+    assert_eq!(manifest["status"], "partial");
+    assert!(
+        !manifest["unreadable_ranges"].as_array().unwrap().is_empty(),
+        "the manifest has to name the byte ranges it could not read: {manifest}"
+    );
 }
 
 /// The response cap must stop the worker, not just discard its output.

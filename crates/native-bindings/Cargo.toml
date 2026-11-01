@@ -18,6 +18,7 @@ forensic-core = { path = "../forensic-core" }
 hashing = { path = "../hashing" }
 image-reader = { path = "../image-reader" }
 job-manager = { path = "../job-manager" }
+libewf-bindings = { path = "../libewf-bindings" }
 partition-analyzer = { path = "../partition-analyzer" }
 reporting = { path = "../reporting" }
 viewer = { path = "../viewer" }

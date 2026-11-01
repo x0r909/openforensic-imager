@@ -18,6 +18,8 @@ use serde_json::{Value, json};
 mod parser_worker;
 
 pub use parser_worker::run_stdio_worker;
+#[cfg(debug_assertions)]
+pub use parser_worker::sandbox_paths_for_debug;
 
 const ABI_MAJOR: u32 = 1;
 const ABI_MINOR: u32 = 2;

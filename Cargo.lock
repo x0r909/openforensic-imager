@@ -484,6 +484,7 @@ dependencies = [
  "image-reader",
  "job-manager",
  "libc",
+ "libewf-bindings",
  "partition-analyzer",
  "proptest",
  "reporting",

@@ -1,4 +1,6 @@
-use libewf_bindings::{EwfCompression, EwfReader, EwfWriteOptions, EwfWriter, is_ewf};
+use libewf_bindings::{
+    EwfCompression, EwfReader, EwfWriteOptions, EwfWriter, is_ewf, segment_paths,
+};
 use tempfile::tempdir;
 
 fn pattern(length: usize) -> Vec<u8> {
@@ -92,6 +94,59 @@ fn segmented_e01_reads_across_segment_boundaries() {
         .output()
         .unwrap();
     assert!(verification.status.success());
+}
+
+/// The worker grants each EWF segment individually instead of the whole
+/// directory, so this must name every sibling the image was split across —
+/// and only those.
+#[test]
+fn segment_paths_lists_only_existing_siblings() {
+    let directory = tempdir().unwrap();
+    std::fs::write(directory.path().join("image.E01"), b"first").unwrap();
+    std::fs::write(directory.path().join("image.E02"), b"second").unwrap();
+    // E03 exists under a differently-cased extension and must still be found.
+    std::fs::write(directory.path().join("image.e03"), b"third").unwrap();
+    // Unrelated neighbours the grant must not cover.
+    std::fs::write(directory.path().join("other.E01"), b"other").unwrap();
+    std::fs::write(directory.path().join("image.raw"), b"raw").unwrap();
+    std::fs::create_dir(directory.path().join("image.E04")).unwrap();
+
+    let segments = segment_paths(&directory.path().join("image.E01"));
+
+    let names: Vec<String> = segments
+        .iter()
+        .map(|path| path.file_name().unwrap().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(names, vec!["image.E01", "image.E02", "image.e03"]);
+}
+
+/// `segment_paths` feeds a Landlock read grant whose entries are canonicalised,
+/// so a symlink named like a segment must not put its target in the grant.
+#[test]
+fn segment_paths_ignores_symlinks_that_look_like_segments() {
+    let directory = tempdir().unwrap();
+    std::fs::write(directory.path().join("image.E01"), b"first").unwrap();
+    let outside = tempdir().unwrap();
+    let target = outside.path().join("elsewhere");
+    std::fs::write(&target, b"outside").unwrap();
+    std::os::unix::fs::symlink(&target, directory.path().join("image.E02")).unwrap();
+
+    let segments = segment_paths(&directory.path().join("image.E01"));
+
+    let names: Vec<String> = segments
+        .iter()
+        .map(|path| path.file_name().unwrap().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(names, vec!["image.E01"]);
+}
+
+#[test]
+fn segment_paths_keeps_the_given_segment_when_it_is_the_only_one() {
+    let directory = tempdir().unwrap();
+    let first = directory.path().join("single.E01");
+    std::fs::write(&first, b"only").unwrap();
+
+    assert_eq!(segment_paths(&first), vec![first]);
 }
 
 #[test]
