@@ -1,4 +1,13 @@
 # Pinned packaging tool source. Replace only with a reviewed release and hash.
-APPIMAGETOOL_URL=https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
-APPIMAGETOOL_SHA256=793fca0ce4bcc309dc65d3f66669f58e3755643e4dadbe03932e7b436128494f
-APPIMAGETOOL_NAME=appimagetool-x86_64.AppImage
+#
+# appimagetool is a per-architecture prebuilt binary, so each architecture has
+# its own entry. `scripts/package-appimage.sh` selects the pair matching the
+# architecture it is building for; a missing pair is a hard error rather than a
+# fallback. The digests were computed from the release assets themselves.
+APPIMAGETOOL_URL_x86_64=https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage
+APPIMAGETOOL_SHA256_x86_64=793fca0ce4bcc309dc65d3f66669f58e3755643e4dadbe03932e7b436128494f
+APPIMAGETOOL_NAME_x86_64=appimagetool-x86_64.AppImage
+
+APPIMAGETOOL_URL_aarch64=https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-aarch64.AppImage
+APPIMAGETOOL_SHA256_aarch64=c8e8c594f4375b072ab8ac71c669e5d0b619113291c750bade424e347183dbe3
+APPIMAGETOOL_NAME_aarch64=appimagetool-aarch64.AppImage

@@ -60,8 +60,9 @@ convert -background none \
     -resize 512x512 "$appdir/io.github.x0r909.OpenForensicImager.png"
 cp "$appdir/io.github.x0r909.OpenForensicImager.png" "$appdir/.DirIcon"
 
-qt_plugins=/usr/lib/x86_64-linux-gnu/qt6/plugins
-qt_qml=/usr/lib/x86_64-linux-gnu/qt6/qml
+multiarch=$(ofi_multiarch)
+qt_plugins="/usr/lib/$multiarch/qt6/plugins"
+qt_qml="/usr/lib/$multiarch/qt6/qml"
 cmake -E make_directory "$appdir/usr/plugins"
 for plugin_dir in platforms imageformats iconengines tls platformthemes \
     xcbglintegrations; do
@@ -88,6 +89,21 @@ sbom="$ofi_output_dir/openforensic-imager-${ofi_version}.cdx.json"
 cp "$sbom" \
     "$appdir/usr/share/doc/openforensic-imager/sbom.cdx.json"
 
+# appimagetool is a per-architecture prebuilt binary, so the lock file pins one
+# entry per architecture and this selects by name. `APPIMAGETOOL_URL` and
+# `APPIMAGETOOL_SHA256` are the selected entry, so the checks below stay as they
+# were; a missing pair is a hard error rather than a fallback to whatever the
+# lock file happens to hold.
+appimage_arch=$(ofi_appimage_arch)
+eval "APPIMAGETOOL_URL=\${APPIMAGETOOL_URL_${appimage_arch}:-}"
+eval "APPIMAGETOOL_SHA256=\${APPIMAGETOOL_SHA256_${appimage_arch}:-}"
+if [[ -z "$APPIMAGETOOL_URL" || -z "$APPIMAGETOOL_SHA256" ]]; then
+    printf 'packaging/tools.lock has no appimagetool entry for %s\n' \
+        "$appimage_arch" >&2
+    exit 1
+fi
+APPIMAGETOOL_NAME="appimagetool-$appimage_arch.AppImage"
+
 cache_dir="$repo_root/packaging/cache"
 tool="$cache_dir/$APPIMAGETOOL_NAME"
 cmake -E make_directory "$cache_dir"
@@ -105,9 +121,9 @@ if [[ ! -f "$tool" ]] \
 fi
 chmod 0755 "$tool"
 
-artifact="$ofi_output_dir/OpenForensic-Imager-${ofi_version}-x86_64.AppImage"
+artifact="$ofi_output_dir/OpenForensic-Imager-${ofi_version}-${appimage_arch}.AppImage"
 cmake -E remove -f "$artifact"
-ARCH=x86_64 \
+ARCH="$appimage_arch" \
 SOURCE_DATE_EPOCH="$ofi_source_date_epoch" \
 APPIMAGE_EXTRACT_AND_RUN=1 \
     "$tool" "$appdir" "$artifact" >"$repo_root/packaging/build/appimagetool.log" 2>&1

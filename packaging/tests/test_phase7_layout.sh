@@ -51,7 +51,10 @@ grep -q '^Icon=io.github.x0r909.OpenForensicImager$' \
     packaging/common/openforensic-imager.desktop
 grep -q 'Analysis-only Flatpak build' packaging/common/THIRD_PARTY.md
 grep -q 'appimagetool-x86_64.AppImage' packaging/tools.lock
-grep -q 'SHA256=' packaging/tools.lock
+grep -q 'appimagetool-aarch64.AppImage' packaging/tools.lock
+# Every appimagetool entry is pinned with a digest; the per-architecture suffix
+# is why this is a pattern rather than a literal `SHA256=`.
+grep -qE 'APPIMAGETOOL_SHA256_(x86_64|aarch64)=[0-9a-f]{64}$' packaging/tools.lock
 grep -q 'LINKER:--build-id=none' apps/desktop/CMakeLists.txt
 grep -q 'Physical acquisition with this build is' docs/packaging/INSTALL.md
 grep -qi 'digest and size comparison' docs/packaging/REPRODUCIBLE_BUILD.md

@@ -8,7 +8,7 @@ repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 deb=${1:-}
 if [[ -z "$deb" ]]; then
     deb=$(find "$repo_root/packaging/output" -maxdepth 1 \
-        -name 'openforensic-imager_*_amd64.deb' -print -quit)
+        -name 'openforensic-imager_*.deb' -print -quit)
 fi
 if [[ ! -f "$deb" ]]; then
     printf 'DEB artifact not found\n' >&2

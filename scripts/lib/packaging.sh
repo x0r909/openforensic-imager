@@ -7,6 +7,65 @@ ofi_source_date_epoch=${SOURCE_DATE_EPOCH:-1793318400}
 ofi_output_dir=${OFI_OUTPUT_DIR:-"$ofi_repo_root/packaging/output"}
 ofi_build_dir=${OFI_BUILD_DIR:-"$ofi_repo_root/build/package-release"}
 
+# --- Architecture -----------------------------------------------------------
+#
+# Every artifact this repository produces used to name its architecture
+# literally: `..._amd64.deb`, `...-x86_64.AppImage`, `flatpak --arch=x86_64`,
+# `/usr/lib/x86_64-linux-gnu/qt6/...`, and `Architecture: amd64` in the DEB
+# control file. On an arm64 host that produces an x86_64-labelled artifact that
+# cannot install, and the suite never noticed because the only host it ran on
+# was x86_64. These four helpers are the single source for the names, and
+# `packaging/tests/test_packaging_architecture.sh` pins them.
+#
+# `DEB_HOST_ARCH` overrides the native architecture. That is not a convenience:
+# the only way to test the arm64 packaging path on the x86_64 host this project
+# is developed on is to build it in an emulated guest, and inside that guest
+# `dpkg-architecture` answers `arm64` on its own — the override is what lets the
+# same scripts be reasoned about from a host of either architecture.
+
+# The Debian architecture name (`amd64`, `arm64`). Validated through
+# `dpkg-architecture -a`, because a plain query echoes back whatever
+# `DEB_HOST_ARCH` was set to and would accept a misspelling, silently
+# mislabelling the artifact.
+ofi_deb_arch() {
+    local arch=${DEB_HOST_ARCH:-$(dpkg-architecture -qDEB_HOST_ARCH)}
+    dpkg-architecture -a "$arch" -qDEB_HOST_ARCH || return 1
+}
+
+# The GNU multiarch tuple (`x86_64-linux-gnu`, `aarch64-linux-gnu`), which is
+# the directory Qt and the loaders use. Derived through `-a` rather than from
+# the environment: `DEB_HOST_ARCH=arm64` alone leaves `dpkg-architecture
+# -qDEB_HOST_MULTIARCH` answering `x86_64-linux-gnu`, which is the trap this
+# helper exists to close.
+ofi_multiarch() {
+    dpkg-architecture -a "$(ofi_deb_arch)" -qDEB_HOST_MULTIARCH 2>/dev/null
+}
+
+# The vendor spelling used by AppImage, Flatpak, and prebuilt AppImage tooling.
+ofi_appimage_arch() {
+    case "$(ofi_deb_arch)" in
+        amd64) printf 'x86_64' ;;
+        arm64) printf 'aarch64' ;;
+        *)
+            printf 'no AppImage architecture for DEB_HOST_ARCH=%s\n' \
+                "$(ofi_deb_arch)" >&2
+            return 1
+            ;;
+    esac
+}
+
+ofi_flatpak_arch() {
+    case "$(ofi_deb_arch)" in
+        amd64) printf 'x86_64' ;;
+        arm64) printf 'aarch64' ;;
+        *)
+            printf 'no Flatpak architecture for DEB_HOST_ARCH=%s\n' \
+                "$(ofi_deb_arch)" >&2
+            return 1
+            ;;
+    esac
+}
+
 ofi_prepare_release() {
     local cmake_args=(
         -DCMAKE_BUILD_TYPE=Release
@@ -207,7 +266,14 @@ ofi_deb_dependencies() {
     local binary=$1
     local native_library=$2
     local libraries
+    local arch
     declare -A packages=()
+
+    # The version is asked for the architecture being built, not `:amd64`. On
+    # an arm64 build the host may hold no arm64 packages at all — the guest
+    # that built it did — so a native or `:amd64` query would silently drop
+    # every dependency and ship a DEB with an empty `Depends`.
+    arch=$(ofi_deb_arch)
 
     add_package() {
         local package=$1
@@ -215,7 +281,7 @@ ofi_deb_dependencies() {
             return
         fi
         local version
-        version=$(dpkg-query -W -f='${Version}' "$package:amd64" 2>/dev/null || true)
+        version=$(dpkg-query -W -f='${Version}' "$package:$arch" 2>/dev/null || true)
         if [[ -n "$version" ]]; then
             packages["$package"]="$version"
         fi

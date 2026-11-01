@@ -2,7 +2,7 @@ Package: openforensic-imager
 Version: @VERSION@-1
 Section: utils
 Priority: optional
-Architecture: amd64
+Architecture: @ARCH@
 Maintainer: x0r909 <openforensic-imager@users.noreply.github.com>
 Depends: @DEPENDS@
 Installed-Size: @INSTALLED_SIZE@

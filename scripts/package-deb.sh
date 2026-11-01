@@ -60,8 +60,10 @@ install -Dm644 "$sbom" "$doc_dir/sbom.cdx.json"
 mkdir -p "$stage/DEBIAN"
 depends=$(ofi_deb_dependencies "$app" "$native")
 installed_size=$(du -sk "$stage" | awk '{ print $1 }')
+deb_arch=$(ofi_deb_arch)
 sed \
     -e "s|@VERSION@|$ofi_version|g" \
+    -e "s|@ARCH@|$deb_arch|g" \
     -e "s|@DEPENDS@|$depends|g" \
     -e "s|@INSTALLED_SIZE@|$installed_size|g" \
     packaging/debian/control.in >"$stage/DEBIAN/control"
@@ -71,7 +73,7 @@ sed \
     find usr -type f -print0 | sort -z | xargs -0 md5sum >DEBIAN/md5sums
 )
 
-artifact="$ofi_output_dir/openforensic-imager_${ofi_version}_amd64.deb"
+artifact="$ofi_output_dir/openforensic-imager_${ofi_version}_${deb_arch}.deb"
 cmake -E remove -f "$artifact"
 SOURCE_DATE_EPOCH="$ofi_source_date_epoch" \
     dpkg-deb --root-owner-group --uniform-compression --compression=xz \

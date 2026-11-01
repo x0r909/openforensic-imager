@@ -40,7 +40,8 @@ ofi_stage_release "$stage"
 cmake -E make_directory "$ofi_output_dir"
 cmake -E remove_directory "$of_root"
 cmake -E remove_directory "$repo"
-flatpak build-init --arch=x86_64 \
+flatpak_arch=$(ofi_flatpak_arch)
+flatpak build-init "--arch=$flatpak_arch" \
     "$of_root" io.github.x0r909.OpenForensicImager \
     org.kde.Sdk org.kde.Platform 6.10
 
@@ -71,10 +72,10 @@ flatpak build-finish "$of_root" --command=openforensic-imager \
 packaging/tests/test_flatpak_build.sh "$of_root"
 
 cmake -E make_directory "$repo"
-flatpak build-export --arch=x86_64 "$repo" "$of_root" "$ofi_version"
-artifact="$ofi_output_dir/openforensic-imager-${ofi_version}-x86_64.flatpak"
+flatpak build-export "--arch=$flatpak_arch" "$repo" "$of_root" "$ofi_version"
+artifact="$ofi_output_dir/openforensic-imager-${ofi_version}-${flatpak_arch}.flatpak"
 cmake -E remove -f "$artifact"
-flatpak build-bundle --arch=x86_64 "$repo" "$artifact" \
+flatpak build-bundle "--arch=$flatpak_arch" "$repo" "$artifact" \
     io.github.x0r909.OpenForensicImager "$ofi_version"
 
 (

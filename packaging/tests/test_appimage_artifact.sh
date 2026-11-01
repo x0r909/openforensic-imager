@@ -5,7 +5,7 @@ repo_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 appimage=${1:-}
 if [[ -z "$appimage" ]]; then
     appimage=$(find "$repo_root/packaging/output" -maxdepth 1 \
-        -name 'OpenForensic-Imager-*-x86_64.AppImage' -print -quit)
+        -name 'OpenForensic-Imager-*.AppImage' -print -quit)
 fi
 if [[ ! -f "$appimage" ]]; then
     printf 'AppImage artifact not found\n' >&2
