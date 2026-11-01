@@ -10,10 +10,12 @@ dependencies = [
  "forensic-fixtures",
  "hashing",
  "image-reader",
+ "libc",
  "libewf-bindings",
  "serde",
  "serde_json",
  "tempfile",
+ "uuid",
 ]
 
 [[package]]

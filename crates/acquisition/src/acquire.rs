@@ -98,6 +98,18 @@ pub struct AcquisitionManifest {
     pub unreadable_ranges: Vec<ByteRangeRecord>,
     pub errors: Vec<String>,
     pub verified: bool,
+    /// How many orphaned staging directories this acquisition removed before it
+    /// started. Absent when the destination could not be scanned; the reason is
+    /// then in `staging_reap_warning`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub staging_reaped: Option<u32>,
+    /// Why reaping could not run. Never fatal to the acquisition.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub staging_reap_warning: Option<String>,
+    /// Why the staging marker for this acquisition could not be written. Never
+    /// fatal; it means this run is only reaped by age, not by pid.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub staging_marker_warning: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -182,6 +194,23 @@ fn acquire_reader(
     cancellation: &CancellationToken,
 ) -> Result<AcquisitionResult, AcquisitionError> {
     let job_id = JobId::new_v4();
+    // Reaping happens once per acquisition, on the single path both entry
+    // points funnel through, so a retry after a cancelled run clears the
+    // orphan it left behind. It must never fail the acquisition: the evidence
+    // write is the priority, and a destination that cannot be scanned is
+    // reported as a warning instead.
+    let (staging_reaped, staging_reap_warning) =
+        match crate::reaper::reap_stale_staging(
+            &request.destination_dir,
+            crate::reaper::DEFAULT_STAGING_MAX_AGE,
+            &crate::reaper::pid_is_alive,
+        ) {
+            Ok(report) => (
+                Some(u32::try_from(report.removed.len()).unwrap_or(u32::MAX)),
+                None,
+            ),
+            Err(error) => (None, Some(error.to_string())),
+        };
     let started_at = UtcTimestamp::now();
     let metadata = reader.metadata();
     let source_length = reader.logical_length();
@@ -194,6 +223,16 @@ fn acquire_reader(
             format!("unable to create staging directory: {error}"),
         )
     })?;
+    // Written immediately: a run that dies at any later point still leaves the
+    // reaper a record of which process owned this directory. A failure to write
+    // it must not fail the acquisition — the evidence write is the priority —
+    // so it is surfaced as a manifest warning instead.
+    let marker_error = crate::reaper::write_marker(
+        &staging,
+        &job_id.to_string(),
+        u64::try_from(started_at.unix_timestamp_nanos() / 1_000_000).unwrap_or(0),
+    )
+    .err();
 
     let mut sink = Sink::create(&staging, &request, source_length)?;
     let mut output_hasher = StreamingHasher::new(&HASH_ALGORITHMS);
@@ -307,6 +346,9 @@ fn acquire_reader(
         unreadable_ranges,
         errors,
         verified,
+        staging_reaped,
+        staging_reap_warning,
+        staging_marker_warning: marker_error.map(|error| error.to_string()),
     };
 
     let manifest_dir = if status == AcquisitionStatus::Succeeded {
@@ -332,6 +374,10 @@ fn acquire_reader(
                 AcquisitionError::new(AcquisitionErrorCode::Io, error.to_string())
             })?;
         }
+        // The marker has to go first: `remove_dir` needs an empty directory, and
+        // every other removal here is best-effort, so leaving it would silently
+        // leak a staging directory after every successful acquisition.
+        let _ = std::fs::remove_file(staging.join(crate::reaper::STAGING_MARKER_FILE));
         let _ = std::fs::remove_dir(&staging);
         request.destination_dir.clone()
     } else {

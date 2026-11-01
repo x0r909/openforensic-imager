@@ -90,12 +90,25 @@ is parsed. There is no silent reduced-assurance path.
 4. **The EWF read grant covers the image directory.** Sibling segments must be
    openable, so a compromised worker can read unrelated files in that
    directory.
-5. **Cancellation is delivered by SIGKILL.** The in-worker cancellation token is
-   a fresh `CancellationToken::default()`, so `acquire_reader`'s cooperative
-   check never fires. A cancelled acquisition does report its retained staging
-   directory (ACQ-011), but there is no reaper or age marker for orphaned
-   `.<base>.partial-<job_id>` directories, so a cancel/retry loop slowly fills
-   the destination volume.
+5. **Cancellation is delivered by SIGKILL, and staging orphans are now reaped.**
+   The in-worker cancellation token is a fresh `CancellationToken::default()`,
+   so `acquire_reader`'s cooperative check never fires. A cancelled acquisition
+   reports its retained staging directory (ACQ-011), and since the orphan cannot
+   clean itself up, `acquire_reader` now reaps on the way in: every staging
+   directory carries a `.ofi-staging.json` marker with its `job_id`, `pid`, and
+   start time, and `acquisition::reap_stale_staging` removes a
+   `.<base>.partial-<uuid>` directory only when its marker's process is gone
+   *and* the directory is older than `DEFAULT_STAGING_MAX_AGE` (24 h). A marker
+   naming a live process is kept regardless of age, so a long acquisition is
+   never reaped out from under itself; a directory with no readable marker is
+   reaped by age alone, or an interrupted run that died before writing its
+   marker would leak forever. Only directories whose names carry a parseable
+   UUID suffix are considered, so a dotfile directory that merely resembles
+   staging output is left alone. Reaping never fails an acquisition: a scan that
+   cannot run is recorded as `staging_reap_warning`, and the count removed is
+   `staging_reaped`. The residual limitation is that a job cancelled inside the
+   24 h window still occupies its retained bytes until the age passes — that
+   window is what makes ACQ-011 retention meaningful.
 6. **Worker identity is fixable only in debug builds.** `OFI_PARSER_WORKER` is
    honoured only under `cfg!(debug_assertions)`; a release build always uses the
    beside-application binary. The environment is still cleared before spawn.

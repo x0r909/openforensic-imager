@@ -1,11 +1,12 @@
 use std::collections::BTreeMap;
 use std::io::Read;
 use std::process::Command;
+use std::time::Duration;
 
 use acquisition::{
     AcquisitionCompression, AcquisitionErrorCode, AcquisitionOptions, AcquisitionRequest,
     AcquisitionStatus, CancellationToken, OutputFormat, VerificationOutcome, acquire_from_reader,
-    acquire_path, acquire_path_with_cancel, verify_image, verify_image_report,
+    acquire_path, acquire_path_with_cancel, reap_stale_staging, verify_image, verify_image_report,
 };
 use forensic_fixtures::{RawLayout, generate_raw_fixture};
 use hashing::{HashAlgorithm, StreamingHasher};
@@ -338,6 +339,235 @@ fn source_write_syscall_child() {
 struct FaultyReader {
     inner: RawReader,
     fail_offset: u64,
+}
+
+/// Creates a staging-shaped directory `.<base>.partial-<uuid>` under `parent`
+/// with an optional marker file, and ages it so the reaper's mtime check has
+/// something to act on.
+fn make_staging(
+    parent: &std::path::Path,
+    base: &str,
+    marker: Option<&str>,
+    age_seconds: u64,
+) -> std::path::PathBuf {
+    let staging = parent.join(format!(".{base}.partial-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir(&staging).unwrap();
+    if let Some(contents) = marker {
+        std::fs::write(staging.join(".ofi-staging.json"), contents).unwrap();
+    }
+    let age = std::time::SystemTime::now() - std::time::Duration::from_secs(age_seconds);
+    set_mtime(&staging, age);
+    staging
+}
+
+fn set_mtime(path: &std::path::Path, when: std::time::SystemTime) {
+    let file = std::fs::File::open(path).unwrap();
+    let times = std::fs::FileTimes::new().set_modified(when);
+    file.set_times(times).unwrap();
+}
+
+fn marker_json(job_id: &str, pid: u32, started_at_unix_ms: u64) -> String {
+    format!(
+        "{{\"job_id\":\"{job_id}\",\"pid\":{pid},\"started_at_unix_ms\":{started_at_unix_ms}}}"
+    )
+}
+
+#[test]
+fn live_staging_directory_is_kept() {
+    let directory = tempdir().unwrap();
+    let staging = make_staging(
+        directory.path(),
+        "live",
+        Some(&marker_json("job-live", std::process::id(), 0)),
+        48 * 60 * 60,
+    );
+
+    let report =
+        reap_stale_staging(directory.path(), Duration::from_secs(24 * 60 * 60), &|_| true).unwrap();
+
+    assert!(report.removed.is_empty(), "{:?}", report.removed);
+    assert!(staging.exists(), "a live acquisition's staging was removed");
+    assert!(report.kept.contains(&staging));
+}
+
+#[test]
+fn stale_staging_directory_is_reaped() {
+    let directory = tempdir().unwrap();
+    // pid 0 is never a live process, so both the liveness check and the age
+    // check agree that this directory is orphaned.
+    let staging = make_staging(
+        directory.path(),
+        "stale",
+        Some(&marker_json("job-stale", 0, 0)),
+        48 * 60 * 60,
+    );
+
+    let report =
+        reap_stale_staging(directory.path(), Duration::from_secs(24 * 60 * 60), &|_| false).unwrap();
+
+    assert!(!staging.exists(), "a stale staging directory survived");
+    assert!(report.removed.contains(&staging));
+}
+
+#[test]
+fn unmarked_directory_without_the_staging_prefix_is_never_reaped() {
+    let directory = tempdir().unwrap();
+    let foreign = directory.path().join("examiner-notes");
+    std::fs::create_dir(&foreign).unwrap();
+    std::fs::write(foreign.join("case.txt"), b"evidence").unwrap();
+    // The prefix alone must not be enough: a directory that is old and matches
+    // the staging shape but carries no marker is not ours to delete.
+    let lookalike = directory.path().join(".notes.partial-not-a-uuid");
+    std::fs::create_dir(&lookalike).unwrap();
+    set_mtime(
+        &foreign,
+        std::time::SystemTime::now() - Duration::from_secs(72 * 60 * 60),
+    );
+    set_mtime(
+        &lookalike,
+        std::time::SystemTime::now() - Duration::from_secs(72 * 60 * 60),
+    );
+
+    let report =
+        reap_stale_staging(directory.path(), Duration::from_secs(24 * 60 * 60), &|_| false).unwrap();
+
+    assert!(report.removed.is_empty(), "{:?}", report.removed);
+    assert!(foreign.join("case.txt").exists());
+    assert!(lookalike.exists(), "a non-uuid lookalike was removed");
+}
+
+#[test]
+fn fresh_cancelled_staging_survives_the_reaper() {
+    let directory = tempdir().unwrap();
+    // ACQ-011: a cancelled acquisition reports its retained staging directory.
+    // The reaper must not delete that output while the examiner can still use it.
+    let staging = make_staging(
+        directory.path(),
+        "cancelled",
+        Some(&marker_json("job-cancelled", 0, 0)),
+        60,
+    );
+
+    let report =
+        reap_stale_staging(directory.path(), Duration::from_secs(24 * 60 * 60), &|_| false).unwrap();
+
+    assert!(report.removed.is_empty(), "{:?}", report.removed);
+    assert!(staging.exists(), "a fresh cancelled staging was reaped");
+}
+
+#[test]
+fn unreadable_marker_is_reaped_only_once_the_directory_is_old() {
+    let directory = tempdir().unwrap();
+    let fresh = make_staging(directory.path(), "fresh-garbage", Some("not json"), 60);
+    let old = make_staging(directory.path(), "old-garbage", Some("not json"), 48 * 60 * 60);
+
+    let report =
+        reap_stale_staging(directory.path(), Duration::from_secs(24 * 60 * 60), &|_| true).unwrap();
+
+    assert!(fresh.exists(), "a fresh unreadable marker was reaped");
+    assert!(!old.exists(), "an old unreadable marker survived");
+    assert!(report.removed.contains(&old));
+}
+
+#[test]
+fn acquisition_reaps_a_stale_sibling_and_records_the_count() {
+    let root = tempdir().unwrap();
+    let destination = root.path().join("out");
+    std::fs::create_dir(&destination).unwrap();
+    let source = source_fixture(root.path());
+    let orphan = make_staging(
+        &destination,
+        "prior",
+        Some(&marker_json("job-prior", 0, 0)),
+        48 * 60 * 60,
+    );
+
+    let result = acquire_path(AcquisitionRequest {
+        source_path: source,
+        destination_dir: destination.clone(),
+        base_name: "reaped".to_owned(),
+        format: OutputFormat::Raw,
+        options: AcquisitionOptions {
+            block_size: 4096,
+            maximum_segment_size: 1024 * 1024,
+            compression: AcquisitionCompression::None,
+            verify_after: true,
+        },
+    })
+    .unwrap();
+
+    assert_eq!(result.status, AcquisitionStatus::Succeeded);
+    assert!(!orphan.exists(), "a stale sibling staging survived acquisition");
+    assert_eq!(result.manifest.staging_reaped, Some(1));
+    assert!(result.manifest.staging_reap_warning.is_none());
+}
+
+#[test]
+fn successful_acquisition_leaves_no_staging_directory_behind() {
+    let root = tempdir().unwrap();
+    let destination = root.path().join("out");
+    std::fs::create_dir(&destination).unwrap();
+    let source = source_fixture(root.path());
+
+    let result = acquire_path(AcquisitionRequest {
+        source_path: source,
+        destination_dir: destination.clone(),
+        base_name: "clean".to_owned(),
+        format: OutputFormat::Raw,
+        options: AcquisitionOptions {
+            block_size: 4096,
+            maximum_segment_size: 1024 * 1024,
+            compression: AcquisitionCompression::None,
+            verify_after: true,
+        },
+    })
+    .unwrap();
+
+    assert_eq!(result.status, AcquisitionStatus::Succeeded);
+    // The marker file makes staging non-empty, so a promotion that removes the
+    // directory without removing the marker first leaks the directory silently.
+    let leftovers = std::fs::read_dir(&destination)
+        .unwrap()
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| name.contains(".partial-"))
+        .collect::<Vec<_>>();
+    assert!(leftovers.is_empty(), "staging leaked: {leftovers:?}");
+}
+
+#[test]
+fn cancelled_acquisition_still_reports_its_retained_staging_directory() {
+    let root = tempdir().unwrap();
+    let destination = root.path().join("out");
+    std::fs::create_dir(&destination).unwrap();
+    let source = source_fixture(root.path());
+
+    // Cancelled before the first block, the way a SIGKILL arrives.
+    let cancellation = CancellationToken::default();
+    cancellation.cancel();
+    let result = acquire_path_with_cancel(
+        AcquisitionRequest {
+            source_path: source,
+            destination_dir: destination.clone(),
+            base_name: "cancelled".to_owned(),
+            format: OutputFormat::Raw,
+            options: AcquisitionOptions {
+                block_size: 4096,
+                maximum_segment_size: 1024 * 1024,
+                compression: AcquisitionCompression::None,
+                verify_after: true,
+            },
+        },
+        &cancellation,
+    )
+    .unwrap();
+
+    assert_eq!(result.status, AcquisitionStatus::Cancelled);
+    // ACQ-011: the retained staging directory stays discoverable, and it now
+    // carries the marker the reaper needs to find it later.
+    let retained = result.manifest_path.parent().unwrap();
+    assert!(retained.to_string_lossy().contains(".partial-"));
+    assert!(retained.join(".ofi-staging.json").exists());
 }
 
 impl ImageReader for FaultyReader {
