@@ -159,4 +159,15 @@ fn sandbox_child() {
         std::io::Error::last_os_error().raw_os_error(),
         Some(libc::EPERM)
     );
+
+    // setpriority is not named by the deny-list, so only a default-deny filter
+    // refuses it. A deny-list permits this, which is the difference the test
+    // exists to detect.
+    let priority_result =
+        unsafe { libc::syscall(libc::SYS_setpriority, libc::PRIO_PROCESS, 0, 0) };
+    assert_eq!(priority_result, -1);
+    assert_eq!(
+        std::io::Error::last_os_error().raw_os_error(),
+        Some(libc::EPERM)
+    );
 }

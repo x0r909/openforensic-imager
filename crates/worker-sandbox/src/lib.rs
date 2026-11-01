@@ -35,33 +35,107 @@ const BPF_JEQ: u16 = 0x10;
 const BPF_K: u16 = 0x00;
 const BPF_RET: u16 = 0x06;
 
-const DENIED_SYSCALLS: &[libc::c_long] = &[
-    libc::SYS_socket,
-    libc::SYS_socketpair,
-    libc::SYS_connect,
-    libc::SYS_bind,
-    libc::SYS_listen,
-    libc::SYS_accept,
-    libc::SYS_accept4,
-    libc::SYS_sendto,
-    libc::SYS_recvfrom,
-    libc::SYS_sendmsg,
-    libc::SYS_recvmsg,
-    libc::SYS_sendmmsg,
-    libc::SYS_recvmmsg,
-    libc::SYS_getsockname,
-    libc::SYS_getpeername,
-    libc::SYS_setsockopt,
-    libc::SYS_getsockopt,
-    libc::SYS_fork,
-    libc::SYS_vfork,
-    libc::SYS_clone,
-    libc::SYS_clone3,
-    libc::SYS_execve,
-    libc::SYS_execveat,
-    libc::SYS_ptrace,
-    libc::SYS_process_vm_readv,
-    libc::SYS_process_vm_writev,
+/// The complete set of system calls the parser worker may issue.
+///
+/// Derived from `strace -ff -e trace=all` over
+/// `cargo test -p native-bindings -p extraction -p acquisition`, restricted to
+/// the post-`execve` stream of each `ofi-parser-worker` process, then reviewed
+/// against the source for calls reachable only on paths the tests do not take.
+/// Anything absent here is refused with `EPERM`, so a syscall added by a future
+/// kernel, or by a compromised parser, is denied by default.
+///
+/// Justification, one line per family:
+///
+/// - Process lifecycle: `exit`, `exit_group`. The worker answers one request
+///   and exits. `clone`, `clone3`, `fork`, `vfork`, `execve`, `execveat` stay
+///   out; the worker runs one request per process and must never spawn or exec.
+///   `exit` is not optional: with it denied, glibc spins retrying the failure
+///   instead of terminating, which is how this gap was found.
+/// - Memory: `brk`, `madvise`, `mmap`, `mprotect`, `munmap`. The allocator, the
+///   sanitizer runtime, and the parsers' own buffers. `madvise` is how the
+///   allocator returns pages to the kernel.
+/// - File inspection and read: `openat`, `openat2`, `read`, `pread64`,
+///   `lseek`, `close`, `fcntl`, `fstat`, `newfstatat`, `statx`, `access`,
+///   `readlink`, `getdents64`, `poll`. Reading evidence and listing a filesystem
+///   image. Every one of these is still confined by Landlock and by the
+///   `O_RDONLY | O_CLOEXEC | O_NOFOLLOW` flags the image reader opens with.
+/// - File creation and rename: `write`, `fsync`, `mkdir`, `mkdirat`, `rename`,
+///   `rmdir`, `unlinkat`. Staging an acquisition, writing an extraction, and
+///   separating a replaced target. `unlinkat` is not reached by any test — it
+///   is the cleanup on an extraction whose hash or size did not match — so it
+///   comes from the source at `crates/extraction/src/lib.rs:569`, not the trace.
+/// - Signalling: `rt_sigaction`, `rt_sigprocmask`, `sigaltstack`. libc and the
+///   Rust runtime install handlers before `main`.
+/// - Time: `clock_gettime`. Tracing, timeouts, and `Instant`. Served from the
+///   vDSO on this host, which is why the trace does not show it.
+/// - Identity: `geteuid`, `gettid`. Ownership checks on output directories.
+/// - Sandbox installation: `prctl`, `seccomp`, `landlock_create_ruleset`,
+///   `landlock_add_rule`, `landlock_restrict_self`. The worker installs the
+///   filter on itself; ordering keeps these before the enclosing restrictions.
+/// - Runtime bookkeeping: `arch_prctl`, `rseq`, `set_robust_list`,
+///   `set_tid_address`, `getrandom`, `futex`, `prlimit64`,
+///   `sched_getaffinity`. glibc and the allocator at start-up.
+/// - Closed by omission: the socket family, `ptrace`, `process_vm_readv`,
+///   `process_vm_writev`, `kill`, `ioctl`, and every `*at` variant that would
+///   escape the Landlock root.
+const ALLOWED_SYSCALLS: &[libc::c_long] = &[
+    // Process lifecycle. `exit` is the single-thread path; denying it makes
+    // glibc retry it in a spin loop instead of terminating.
+    libc::SYS_exit,
+    libc::SYS_exit_group,
+    // Memory.
+    libc::SYS_brk,
+    libc::SYS_madvise,
+    libc::SYS_mmap,
+    libc::SYS_mprotect,
+    libc::SYS_munmap,
+    // File inspection and read.
+    libc::SYS_openat,
+    libc::SYS_openat2,
+    libc::SYS_read,
+    libc::SYS_pread64,
+    libc::SYS_lseek,
+    libc::SYS_close,
+    libc::SYS_fcntl,
+    libc::SYS_fstat,
+    libc::SYS_newfstatat,
+    libc::SYS_statx,
+    libc::SYS_access,
+    libc::SYS_readlink,
+    libc::SYS_getdents64,
+    libc::SYS_poll,
+    // File creation, rename, and cleanup.
+    libc::SYS_write,
+    libc::SYS_fsync,
+    libc::SYS_mkdir,
+    libc::SYS_mkdirat,
+    libc::SYS_rename,
+    libc::SYS_rmdir,
+    libc::SYS_unlinkat,
+    // Signalling.
+    libc::SYS_rt_sigaction,
+    libc::SYS_rt_sigprocmask,
+    libc::SYS_sigaltstack,
+    // Time.
+    libc::SYS_clock_gettime,
+    // Identity.
+    libc::SYS_geteuid,
+    libc::SYS_gettid,
+    // Sandbox installation.
+    libc::SYS_prctl,
+    libc::SYS_seccomp,
+    libc::SYS_landlock_create_ruleset,
+    libc::SYS_landlock_add_rule,
+    libc::SYS_landlock_restrict_self,
+    // Runtime bookkeeping.
+    libc::SYS_arch_prctl,
+    libc::SYS_rseq,
+    libc::SYS_set_robust_list,
+    libc::SYS_set_tid_address,
+    libc::SYS_getrandom,
+    libc::SYS_futex,
+    libc::SYS_prlimit64,
+    libc::SYS_sched_getaffinity,
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -270,19 +344,22 @@ pub fn apply_landlock(policy: &SandboxPolicy) -> Result<(), SandboxError> {
 }
 
 pub fn apply_seccomp_restrictions() -> Result<(), SandboxError> {
-    let mut filter = Vec::with_capacity(DENIED_SYSCALLS.len() * 2 + 6);
+    let mut filter = Vec::with_capacity(ALLOWED_SYSCALLS.len() * 2 + 6);
     filter.push(statement(BPF_LD | BPF_W | BPF_ABS, 4));
     filter.push(jump(BPF_JMP | BPF_JEQ | BPF_K, AUDIT_ARCH_X86_64, 1, 0));
     filter.push(statement(BPF_RET | BPF_K, libc::SECCOMP_RET_KILL_PROCESS));
     filter.push(statement(BPF_LD | BPF_W | BPF_ABS, 0));
-    for syscall in DENIED_SYSCALLS {
+    for syscall in ALLOWED_SYSCALLS {
         filter.push(jump(BPF_JMP | BPF_JEQ | BPF_K, *syscall as u32, 0, 1));
-        filter.push(statement(
-            BPF_RET | BPF_K,
-            libc::SECCOMP_RET_ERRNO | libc::EPERM as u32,
-        ));
+        filter.push(statement(BPF_RET | BPF_K, libc::SECCOMP_RET_ALLOW));
     }
-    filter.push(statement(BPF_RET | BPF_K, libc::SECCOMP_RET_ALLOW));
+    // Default deny: a syscall outside the allow-list gets EPERM. A future
+    // kernel's new syscall lands here rather than being permitted, which is the
+    // difference between this filter and the deny-list it replaced.
+    filter.push(statement(
+        BPF_RET | BPF_K,
+        libc::SECCOMP_RET_ERRNO | libc::EPERM as u32,
+    ));
     let mut program = libc::sock_fprog {
         len: filter.len() as u16,
         filter: filter.as_mut_ptr(),

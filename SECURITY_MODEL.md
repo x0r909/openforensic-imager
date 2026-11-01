@@ -136,8 +136,11 @@ For physical acquisition:
 The worker process is started with:
 
 - `PR_SET_NO_NEW_PRIVS`.
-- A seccomp filter that permits only required read, write, memory, time, signal,
-  and local-socket operations. Network and process execution are denied.
+- A seccomp filter that is default-deny: it permits only an explicit allow-list
+  of required read, write, memory, time, signal, exit, and sandbox-installation
+  operations. Network, process creation and execution, `ptrace`, and
+  cross-process memory access are denied by omission, so a syscall added by a
+  future kernel is refused with `EPERM` rather than permitted.
 - A Landlock ruleset that grants read access to the source and read/write access
   only to the job staging directory.
 - `RLIMIT_AS` or a cgroup memory limit.
@@ -289,7 +292,9 @@ coverage remain open validation work.
 The following controls now have executable negative or differential evidence:
 
 - Landlock denies reads outside the allowlist and denies writes without a grant.
-- seccomp denies network sockets and process creation in the sandbox child.
+- seccomp denies network sockets, process creation, and `setpriority` in the
+  sandbox child. `setpriority` is not a syscall any deny-list would name; it is
+  refused because the filter allows only what the worker actually issues.
 - Acquisition source opens are traced as read-only.
 - Extraction stays under the opened capability root across repeated path
   replacement.
@@ -301,8 +306,9 @@ The following controls now have executable negative or differential evidence:
 Phase 8 connects image, partition, filesystem, acquisition, verification,
 preview, signature, and extraction jobs to `ofi-parser-worker`. TSK, libewf,
 filesystem, and viewer parsing no longer execute in the desktop process. The
-worker applies Landlock, seccomp with thread synchronization, resource limits,
-a process-group watchdog, and bounded request and response sizes. Crash,
+worker applies Landlock, a default-deny seccomp allow-list with thread
+synchronization, resource limits, a process-group watchdog, and bounded request
+and response sizes. Crash,
 cancellation, timeout, and package execution tests pass on the local host.
 
 This is process isolation under the same Unix user, not a privilege boundary

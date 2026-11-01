@@ -37,7 +37,7 @@ boundary fails closed in both directions.
 | Resource limits | `worker_sandbox::ResourceLimits` | `RLIMIT_CORE` 0, `RLIMIT_AS` 4 GiB, `RLIMIT_CPU` 1 h, `RLIMIT_NOFILE` 256, `RLIMIT_FSIZE` 64 MiB |
 | Environment allowlist | `WORKER_ENVIRONMENT_ALLOWLIST` | `LANG`, `LC_ALL`, `LC_CTYPE`, `TZ`, `TZDIR`, `LIBEWF_VERBOSE` only |
 | Path allowlist | `worker_sandbox::apply_landlock` | Read roots from the evidence path only; write roots from the request's own output fields |
-| Syscall filter | `worker_sandbox::apply_seccomp_restrictions` | `SYS_seccomp` with `SECCOMP_FILTER_FLAG_TSYNC`; denies network, process creation, execution, ptrace |
+| Syscall filter | `worker_sandbox::apply_seccomp_restrictions` | `SYS_seccomp` with `SECCOMP_FILTER_FLAG_TSYNC`; default-deny allow-list, so network, process creation, execution, ptrace, and any unlisted syscall get `EPERM` |
 | Privilege escalation | `PR_SET_NO_NEW_PRIVS` | Set before Landlock and seccomp are installed |
 | Crash containment | `catch_unwind` in the worker | A panic becomes a `worker.panic` response, not a lost job |
 
@@ -70,9 +70,23 @@ is parsed. There is no silent reduced-assurance path.
    immediately, so a flooding worker cannot be drained to EOF or to the
    wall-clock deadline. The worker's `RLIMIT_FSIZE` matches the same 64 MiB
    budget, so it cannot emit more than the parent accepts.
-3. **The seccomp policy is a deny-list.** A syscall added to a future kernel is
-   permitted by default, which is weaker than the allow-list the security model
-   describes.
+3. **The seccomp policy is now a default-deny allow-list.** The filter permits
+   only the syscalls the worker was observed to issue and refuses everything
+   else with `EPERM`, so a syscall added by a future kernel is denied rather
+   than permitted. The list was derived from `strace -ff -e trace=all` over
+   `cargo test -p native-bindings -p extraction -p acquisition`, restricted to
+   the post-`execve` stream of each `ofi-parser-worker` process, then reviewed
+   against the source for calls reachable only on paths no test takes:
+   `unlinkat` is the cleanup after a failed extraction hash comparison
+   (`crates/extraction/src/lib.rs:569`) and `clock_gettime` is served from the
+   vDSO, so neither appears in the trace. Two gaps found this way are recorded
+   in the justification comment: denying `exit` made glibc spin retrying the
+   failure instead of terminating, and `madvise` is the allocator returning
+   pages. The residual limitation is narrower than the deny-list it replaced: a
+   worker capability that no test and no reviewed code path exercises would
+   fail with `EPERM` in production rather than being silently permitted.
+   `crates/worker-sandbox/tests/sandbox.rs` pins the difference by requiring
+   `EPERM` from `setpriority`, which no deny-list would name.
 4. **The EWF read grant covers the image directory.** Sibling segments must be
    openable, so a compromised worker can read unrelated files in that
    directory.
