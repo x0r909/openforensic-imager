@@ -91,12 +91,19 @@ fi
 
 # --- No architecture literal survives where it was hardcoded ---------------
 
-# `control.in` takes the architecture as a substitution; the three packaging
-# scripts take it from the helpers. A literal in any of them is the defect this
-# test exists for.
+# `control.in` takes the architecture as a substitution; the packaging scripts
+# take it from the helpers. A literal in any of them is the defect this test
+# exists for. `generate-sbom.sh` belongs in this list too: it names the
+# architecture twice, once in the `dpkg-query` package name and once in the
+# purl's `arch` qualifier, and an arm64 build's SBOM would otherwise describe
+# amd64 system packages that the artifact does not contain.
+# A comment that names the old architecture to explain itself is fine; a code
+# line that still names it is not — the same rule the `:amd64` check on
+# `packaging.sh` applies below.
 for file in scripts/package-deb.sh scripts/package-appimage.sh \
-    scripts/package-flatpak.sh; do
-    if grep -nE '(^|[^_a-z-])(amd64|x86_64|aarch64|arm64)([^_a-z-]|$)' "$file"; then
+    scripts/package-flatpak.sh scripts/generate-sbom.sh; do
+    if grep -vE '^[[:space:]]*#' "$file" \
+        | grep -nE '(^|[^_a-z-])(amd64|x86_64|aarch64|arm64)([^_a-z-]|$)'; then
         printf '%s still names an architecture literally\n' "$file" >&2
         exit 1
     fi

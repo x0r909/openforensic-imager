@@ -67,22 +67,28 @@ system_packages=(
     qml6-module-qtquick-templates
     qml6-module-qtquick-window
 )
+# The SBOM describes the packages this artifact was built against, so the
+# architecture is the one being built, not the host's: on an arm64 build an
+# `:amd64` query would either find nothing (arm64 packages absent) and silently
+# drop every system component, or describe the wrong packages entirely.
+deb_arch=$(ofi_deb_arch)
 : >"$system_file"
 for package in "${system_packages[@]}"; do
-    version=$(dpkg-query -W -f='${Version}' "$package:amd64" 2>/dev/null || true)
+    version=$(dpkg-query -W -f='${Version}' "$package:$deb_arch" 2>/dev/null || true)
     if [[ -z "$version" ]]; then
         continue
     fi
     jq -nc \
         --arg name "$package" \
         --arg version "$version" \
+        --arg arch "$deb_arch" \
         '{
             type: "library",
             "bom-ref": ("pkg:deb/ubuntu/" + $name + "@" + $version),
             group: "ubuntu-26.04",
             name: $name,
             version: $version,
-            purl: ("pkg:deb/ubuntu/" + $name + "@" + $version + "?arch=amd64")
+            purl: ("pkg:deb/ubuntu/" + $name + "@" + $version + "?arch=" + $arch)
         }' >>"$system_file"
 done
 jq -s 'sort_by(."bom-ref")' "$system_file" >"$system_file.sorted"
