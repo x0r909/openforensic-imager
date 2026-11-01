@@ -52,6 +52,10 @@ fn sandboxed_child_cannot_read_outside_allowlist_or_open_network() {
             "--test-threads=1",
         ])
         .env("OFI_SANDBOX_CHILD", "1")
+        // LeakSanitizer needs ptrace and fork to scan its child, and this child
+        // is confined by exactly the seccomp filter that denies both. Address
+        // sanitization still applies; only the leak scan is off in this process.
+        .env("ASAN_OPTIONS", "detect_leaks=0")
         .status()
         .unwrap();
     assert!(status.success());
@@ -70,6 +74,23 @@ fn resource_limits_are_applied_before_parsing() {
         .status()
         .unwrap();
     assert!(status.success());
+}
+
+#[test]
+fn address_space_limit_survives_the_sanitizer_requirement() {
+    let limits = ResourceLimits::parser_default();
+    if cfg!(ofi_sanitizer) {
+        // AddressSanitizer and MemorySanitizer reserve terabytes of shadow
+        // memory, so a finite RLIMIT_AS kills the instrumented worker before it
+        // parses anything. The cap is still enforced by every normal build.
+        assert_eq!(
+            limits.address_space_bytes,
+            u64::MAX,
+            "an instrumented worker cannot run under a finite address-space cap"
+        );
+    } else {
+        assert_eq!(limits.address_space_bytes, 4 * 1024 * 1024 * 1024);
+    }
 }
 
 #[test]

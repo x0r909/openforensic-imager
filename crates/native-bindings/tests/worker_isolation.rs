@@ -15,7 +15,10 @@ static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 fn worker_executable() -> PathBuf {
     let current = std::env::current_exe().unwrap();
-    for ancestor in current.ancestors().skip(1).take(3) {
+    // Cargo on this host emits test binaries below
+    // `target/<triple>/debug/build/<crate>/<hash>/out`, so the worker sits five
+    // levels up rather than the two a plain `target/debug/deps` layout needs.
+    for ancestor in current.ancestors().skip(1).take(8) {
         let candidate = ancestor.join("ofi-parser-worker");
         if candidate.is_file() {
             return candidate;

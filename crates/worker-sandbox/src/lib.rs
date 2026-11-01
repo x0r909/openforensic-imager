@@ -142,7 +142,15 @@ impl SandboxPolicy {
 impl ResourceLimits {
     pub fn parser_default() -> Self {
         Self {
-            address_space_bytes: 4 * 1024 * 1024 * 1024,
+            // AddressSanitizer and MemorySanitizer reserve terabytes of shadow
+            // memory, so a finite RLIMIT_AS kills an instrumented worker before
+            // it parses anything. scripts/run-sanitizers.sh sets this cfg; every
+            // normal build keeps the 4 GiB cap. `u64::MAX` is `RLIM_INFINITY`.
+            address_space_bytes: if cfg!(ofi_sanitizer) {
+                u64::MAX
+            } else {
+                4 * 1024 * 1024 * 1024
+            },
             cpu_seconds: 60 * 60,
             open_files: 256,
             // Matches `MAX_RESPONSE_BYTES` in native-bindings: the worker cannot

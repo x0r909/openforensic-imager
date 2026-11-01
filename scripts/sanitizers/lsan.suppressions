@@ -1,0 +1,11 @@
+# TSK 4.12.1 and its image-format modules keep process-global allocations alive
+# after the handle is closed. LeakSanitizer reports them because those C
+# libraries are neither instrumented nor responsible for freeing that state, so
+# the reports say nothing about OpenForensic Imager's own allocations.
+#
+# Leaks allocated by instrumented Rust code still fail the run.
+leak:libtsk
+leak:libvmdk
+leak:libvhdi
+leak:libewf
+leak:libcdata
