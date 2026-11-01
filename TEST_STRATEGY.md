@@ -247,6 +247,71 @@ External parser crashes are expected to terminate the worker, not the test
 driver. The harness records the exact input hash and minimized reproducer.
 Native libraries are also tested under sanitizer builds where supported.
 
+### Budget and scheduling
+
+`scripts/fuzz-budget.sh [--minutes <n>] [--target <name>]` runs the budget. It
+defaults to 5 minutes per target over `c_abi_json` and `viewer_pages`, writes
+each libFuzzer log to `packaging/build/fuzz/<target>.log`, exits non-zero when
+a target exits non-zero, and exits non-zero when anything appears under
+`tests/fuzz/artifacts/<target>/`. AddressSanitizer is on by default under
+`cargo-fuzz`, so this is the ASan fuzz budget; `-rss_limit_mb=4096` bounds one
+runaway input.
+
+The budget belongs to the **nightly** tier in section 16, not the pull-request
+tier. The reason is cost, not severity: ten minutes per target is roughly
+twenty minutes of wall clock for two targets, which is too long to sit in front
+of every pull request, and the property being tested — that no arbitrary input
+crashes a parser — does not change between two commits of an unrelated file.
+
+The scheduled invocation is:
+
+```
+scripts/fuzz-budget.sh --minutes 10
+```
+
+For a workstation that is not a CI runner, a `systemd --user` timer is the
+interim scheduler:
+
+```ini
+# ~/.config/systemd/user/ofi-fuzz-budget.service
+[Unit]
+Description=OpenForensic Imager nightly fuzz budget
+[Service]
+Type=oneshot
+WorkingDirectory=%h/src/openforensic-imager
+ExecStart=%h/src/openforensic-imager/scripts/fuzz-budget.sh --minutes 10
+IOSchedulingClass=idle
+CPUSchedulingPolicy=batch
+Nice=10
+
+# ~/.config/systemd/user/ofi-fuzz-budget.timer
+[Unit]
+Description=Run the OpenForensic Imager fuzz budget nightly
+[Timer]
+OnCalendar=daily
+Persistent=true
+[Install]
+WantedBy=timers.target
+```
+
+`Nice`, `CPUSchedulingPolicy=batch`, and `IOSchedulingClass=idle` matter on an
+examiner's workstation: the budget is long-running and it must not make an
+acquisition or a preview unresponsive while it runs. `Persistent=true` means a
+night the machine was off does not silently skip the budget.
+
+**This repository has no CI configuration and no committed unit files.** §16
+names the nightly tier this budget belongs to; nothing executes it
+automatically today, and a maintainer runs it by hand. Committing the timer
+above into `packaging/` is the follow-up that would close that gap.
+
+An artifact is not a finding until it is triaged. A run that produces one has
+failed: reproduce it with
+`cargo +nightly fuzz run --fuzz-dir tests/fuzz <target> tests/fuzz/artifacts/<target>/<file>`
+and either open a fix task in `IMPLEMENTATION_PLAN.md` or record the input in
+`docs/testing/phase9-results.md` as a known non-crash with the reason. Artifacts
+under `tests/fuzz/artifacts/` are git-ignored, so an untriaged one is also lost
+work.
+
 ## 12. Security tests
 
 - Attempt to open a source for write through every public path.

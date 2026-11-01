@@ -1,8 +1,9 @@
 # Phase 9 Validation Results
 
-Status: sanitizer evidence collected on this host; the fuzz budget and the
-Phase 8 residual hardening are tracked in
-[`docs/superpowers/plans/2026-11-01-remaining-work.md`](../superpowers/plans/2026-11-01-remaining-work.md).
+Status: sanitizer and fuzz-budget evidence collected on this host. The Phase 8
+residual hardening is tracked in
+[`docs/superpowers/plans/2026-11-01-remaining-work.md`](../superpowers/plans/2026-11-01-remaining-work.md);
+what that hardening does not cover is listed under "Not covered" below.
 
 ## Host and toolchain
 
@@ -74,6 +75,61 @@ code, not a finding. Excluded for that reason: `acquisition`, `filesystem`,
 `reporting` (depends on `acquisition`), and `job-manager` (`acquisition` is a
 dev-dependency, so its test binaries link libewf too).
 
+## Fuzzing (ASan budget)
+
+```
+scripts/fuzz-budget.sh --minutes 10
+```
+
+`cargo-fuzz` builds the target with AddressSanitizer, so this budget is the
+ASan fuzz budget. `-rss_limit_mb=4096` bounds one runaway input. The script
+fails on a non-zero target exit and on any file appearing under
+`tests/fuzz/artifacts/<target>/`. Logs are git-ignored under
+`packaging/build/fuzz/`.
+
+Result (2026-11-01): exit 0, no artifacts, no crash.
+
+| Target | Executions | Wall | Peak RSS | Final coverage |
+|---|---|---|---|---|
+| `c_abi_json` | 10,439,152 | 601 s | 529 MB | cov 1305, ft 5210 |
+| `viewer_pages` | 32,820,070 | 601 s | 512 MB | cov 177, ft 525 |
+
+Coverage had plateaued before the budget ended: the last three progress lines
+in each log report the same `cov`/`ft` pair, after 2,112 reporting lines for
+`c_abi_json` and 85 for `viewer_pages`. Executions kept accumulating with no new
+coverage, which is what a fuzzer does once it has saturated its corpus — it is
+evidence that the budget ran to completion, not that the targets are
+exhaustively tested.
+
+Both ran the full budget rather than being cut short, and both peaked at
+roughly 512 MB RSS — an eighth of the 4 GiB ceiling. The ceiling was not
+approached, so it constrains a pathological input, not normal execution.
+
+Execution rates are 17.4k/s (`c_abi_json`) and 54.6k/s (`viewer_pages`). The
+Phase 6 comparison figure of 645,347 executions in 21 seconds (≈30.7k/s) is not
+directly comparable: it was a five-second smoke run against a smaller seed
+corpus, and the rate depends on corpus size and input length. The `c_abi_json`
+rate is lower here for that reason, not because the target regressed.
+
+### Triage
+
+No artifact was produced, so no input needed triage. Nothing was written to
+`tests/fuzz/artifacts/`, and both artifact directories are empty. A run with an
+artifact is a failed run: it is reproduced with
+`cargo +nightly fuzz run --fuzz-dir tests/fuzz <target> tests/fuzz/artifacts/<target>/<file>`
+and either becomes a fix task or is recorded here as a known non-crash.
+
+### Scheduling
+
+`TEST_STRATEGY.md` section 11 records the decision: the budget is a **nightly**
+tier item, not a pull-request gate, because ten minutes per target is too long
+to run in front of every pull request and the property it tests does not change
+between two commits of an unrelated file. That section carries the exact
+`systemd --user` timer and the `Nice`/`CPUSchedulingPolicy=batch` settings that
+keep the run from competing with an examiner's acquisition. **Nothing executes
+this budget automatically today** — the repository has no CI configuration and
+no committed unit files, so a maintainer runs it by hand.
+
 ## Not covered
 
 - `acquisition_never_opens_the_source_for_write` (the `strace` regression
@@ -88,6 +144,6 @@ dev-dependency, so its test binaries link libewf too).
 ## Baseline commands on the same host
 
 ```
-cargo test --workspace     # 70 suites ok, 168 tests passed
+cargo test --workspace     # 70 suites ok, 182 tests passed
 cargo clippy --workspace --all-targets -- -D warnings   # clean
 ```

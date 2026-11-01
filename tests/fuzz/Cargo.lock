@@ -9,9 +9,11 @@ dependencies = [
  "forensic-core",
  "hashing",
  "image-reader",
+ "libc",
  "libewf-bindings",
  "serde",
  "serde_json",
+ "uuid",
 ]
 
 [[package]]
@@ -363,6 +365,7 @@ dependencies = [
  "image-reader",
  "job-manager",
  "libc",
+ "libewf-bindings",
  "partition-analyzer",
  "reporting",
  "serde",
