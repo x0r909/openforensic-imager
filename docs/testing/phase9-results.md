@@ -55,6 +55,25 @@ attributes their state to the test process. The 169 allocations it reported
 before the suppression file existed all came from those libraries. Leaks
 allocated by instrumented Rust still fail the run.
 
+## MemorySanitizer (scoped)
+
+```
+scripts/run-sanitizers.sh --sanitizer memory \
+    --crates "-p forensic-core -p hashing -p viewer -p audit-log -p worker-sandbox"
+```
+
+Result (2026-11-01): exit 0, 18 suites `test result: ok`, 53 tests passed, no
+MemorySanitizer report. Log: `packaging/build/sanitizers/memory.log`.
+
+MSan is claimed only for crates that link no C code, because its shadow tracking
+stops at an uninstrumented library boundary: reads that TSK, libewf, or SQLite
+perform are reported as uninitialized, which is a false positive about our
+code, not a finding. Excluded for that reason: `acquisition`, `filesystem`,
+`image-reader`, `libewf-bindings`, `partition-analyzer`, `tsk-bindings`,
+`evidence-manager` (bundled SQLite), `extraction`, `native-bindings`,
+`reporting` (depends on `acquisition`), and `job-manager` (`acquisition` is a
+dev-dependency, so its test binaries link libewf too).
+
 ## Not covered
 
 - `acquisition_never_opens_the_source_for_write` (the `strace` regression

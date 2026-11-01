@@ -121,6 +121,7 @@ dependencies = [
  "forensic-core",
  "rusqlite",
  "serde",
+ "serde_json",
  "time",
 ]
 
@@ -361,11 +362,13 @@ dependencies = [
  "hashing",
  "image-reader",
  "job-manager",
+ "libc",
  "partition-analyzer",
  "reporting",
  "serde",
  "serde_json",
  "viewer",
+ "worker-sandbox",
 ]
 
 [[package]]
@@ -442,6 +445,8 @@ dependencies = [
  "extraction",
  "forensic-core",
  "hashing",
+ "image-reader",
+ "libc",
  "serde",
  "serde_json",
 ]
@@ -727,6 +732,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3b1f9c3798725016c6ee5f2f57869ec0831e8bbc0ab0310a86e787e97f41389e"
 dependencies = [
  "unicode-ident",
+]
+
+[[package]]
+name = "worker-sandbox"
+version = "0.1.0"
+dependencies = [
+ "libc",
 ]
 
 [[package]]
