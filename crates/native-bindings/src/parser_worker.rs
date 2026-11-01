@@ -175,10 +175,14 @@ fn process_request(bytes: &[u8]) -> WorkerResponse {
 /// up to what it inherited, and the hard limit is what this sets. The worker
 /// serves one request per process, so this process's budget is this job's.
 ///
-/// A job that declares nothing larger keeps the default floor. Extraction is
-/// bounded before it opens a destination — `ExtractionOptions` rejects an entry
-/// past `max_file_bytes` instead of writing into the limit — so its declared
-/// budget is the whole limit.
+/// The derived value is a *floor*, not the whole budget: a job may write more
+/// than the evidence it names. The acquisition writes its manifest beside the
+/// image, and the manifest is larger than a tiny image — a budget equal to a
+/// 512-byte source fails the job on the manifest that describes it. So the
+/// budget is the larger of the derived value and the default, and the derived
+/// value only ever raises it. Extraction is bounded separately, before it opens
+/// a destination: `ExtractionOptions` rejects an entry past `max_file_bytes`
+/// rather than writing into the limit.
 fn file_size_limits(request: &JobRequest) -> ResourceLimits {
     let mut limits = ResourceLimits::parser_default();
     let declared = match request {
@@ -189,11 +193,14 @@ fn file_size_limits(request: &JobRequest) -> ResourceLimits {
             ..
         } => match format {
             OutputFormat::Raw => {
-                // A source the reader cannot size falls back to the default
-                // floor: the acquisition reports the failure itself, and a
-                // smaller limit cannot turn it into a different one.
+                // A source the reader cannot size keeps the default floor: the
+                // acquisition reports the failure itself, and a smaller limit
+                // cannot turn it into a different one.
                 acquisition_source_length(source_path).unwrap_or(limits.file_size_bytes)
             }
+            // An EWF acquisition rolls a new segment at this size, so it bounds
+            // each file the worker writes — but not the report files beside
+            // them, which is why this is a floor for the whole budget too.
             OutputFormat::Ewf1E01 => options.maximum_segment_size,
         },
         JobRequest::ExtractFile { .. } | JobRequest::ExtractDirectory { .. } => {
@@ -205,7 +212,7 @@ fn file_size_limits(request: &JobRequest) -> ResourceLimits {
     // request the job will reject on its own terms. Handing a zero to
     // `apply_resource_limits` would make it a sandbox failure instead, which
     // names the sandbox for a defect in the request.
-    limits.file_size_bytes = declared.max(1);
+    limits.file_size_bytes = declared.max(limits.file_size_bytes).max(1);
     limits
 }
 

@@ -588,6 +588,65 @@ fn acquisition_larger_than_the_default_file_size_limit_completes() {
     );
 }
 
+/// A source far smaller than the default floor is still acquired.
+///
+/// The per-job budget is derived from the source length, and that length is not
+/// all the worker writes: the acquisition also writes its own manifest, which
+/// is larger than a tiny image. A budget equal to the source exactly therefore
+/// fails the job on the manifest that describes it — and it fails for a small
+/// source, which is the opposite of the intuition that only large jobs can
+/// reach a file-size limit. The budget is a floor under the derived value for
+/// this reason, and this is the test that says so.
+#[test]
+fn a_source_smaller_than_the_file_size_floor_is_still_acquired() {
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    let mut environment = EnvironmentGuard::new();
+    unsafe { environment.set("OFI_WORKER_TIMEOUT_SECS", "60") };
+
+    let directory = tempdir().unwrap();
+    let source = directory.path().join("source.raw");
+    // Small enough that the source length alone would be a budget smaller than
+    // the manifest, and small enough to fit inside one filesystem block.
+    let source_bytes = 512_u64;
+    std::fs::write(&source, vec![0x41_u8; source_bytes as usize]).unwrap();
+
+    let destination = directory.path().join("destination");
+    std::fs::create_dir(&destination).unwrap();
+    let request = serde_json::json!({
+        "operation": "acquisition",
+        "source_path": source,
+        "destination_dir": destination,
+        "base_name": "tiny",
+        "format": "raw",
+        "options": {
+            "block_size": 4096,
+            "maximum_segment_size": 1048576,
+            "compression": "none",
+            "verify_after": false
+        }
+    });
+
+    let mut manager: *mut ofi_job_manager = ptr::null_mut();
+    let mut error = ptr::null_mut();
+    assert_eq!(
+        unsafe { ofi_job_manager_new(1, &mut manager, &mut error) },
+        ofi_status::OFI_STATUS_OK
+    );
+    let job_id = unsafe { submit(manager, &request) }.unwrap();
+    let snapshot = wait_for_job_within(manager, &job_id, Duration::from_secs(60));
+    unsafe { ofi_job_manager_free(manager) };
+
+    assert_ne!(
+        snapshot["body"]["status"], "failed",
+        "a source smaller than the file-size floor must still be acquired: \
+         {snapshot}"
+    );
+    assert_eq!(
+        snapshot["body"]["result"]["manifest"]["bytes_written"], source_bytes,
+        "the manifest has to account for the whole source: {snapshot}"
+    );
+}
+
 /// The same guarantee for EWF, whose per-file bound is the segment size.
 ///
 /// An EWF acquisition rolls segments at `maximum_segment_size`, so that value —

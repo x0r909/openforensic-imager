@@ -381,6 +381,51 @@ acceptance is:
 - Image open does not scan the full image unless format validation requires it.
 - The UI remains responsive during all measured jobs.
 
+### Long-duration acquisition soak
+
+`scripts/soak-acquisition.sh [--size <size>] [--runs <n>] [--run-seconds <n>]
+[--rss-ceiling-mb <n>] [--work-dir <path>] [--keep]` drives the real acquisition
+path — the same `ofi-parser-worker` the application spawns, one JSON request on
+stdin — against a sparse source of the requested size, and reports throughput,
+peak RSS, and hash stability across passes. It exits non-zero if any pass fails,
+exceeds the RSS ceiling, or produces a hash different from the first pass.
+
+Three details of the harness are deliberate rather than incidental:
+
+- **The worker's stdout is captured through a pipe** (`| cat`, with
+  `PIPESTATUS[0]` as the status). That is production's shape — the parent
+  spawns the worker with `Stdio::piped()` — and `RLIMIT_FSIZE` does not govern
+  pipes. A worker whose output breaches the budget returns a typed error over a
+  pipe; the same worker writing straight into a regular file breaches the limit
+  on the *response* and dies without one.
+- **A tmpfs work directory is refused.** A tmpfs is RAM, so a soak there fills
+  memory instead of disk and the peak-RSS figure measures the page cache. The
+  default is `packaging/build/soak-work`, and the script warns when free space
+  is below the requested source size.
+- **The derived per-job budget is a floor, not the source length.** An
+  acquisition writes its manifest beside the image and the manifest is larger
+  than a tiny image, so a source smaller than the default 64 MiB floor is still
+  acquired. `crates/native-bindings/tests/worker_isolation.rs` covers that
+  boundary; the soak script covers the upper end.
+
+**The gap.** This is a bounded-memory smoke test, explicitly not a
+multi-terabyte claim. A raw acquisition writes every byte of its source
+sequentially — `Sink::Raw` opens with `create_new` and uses `write_all`, with no
+`seek`/`SEEK_HOLE` — so a sparse source is a valid *read* test but a 100 GB
+source needs roughly 100 GB of real output. Multi-terabyte and multi-hour runs
+still require release hardware with that much free space and days of wall
+clock; they cannot be performed on the development host, and a run that is
+stopped at a deadline is reported as incomplete rather than as a pass.
+
+What bounds a long run is therefore not memory but durability:
+`Sink::finish` calls `sync_all` once per image
+(`crates/acquisition/src/acquire.rs:489`), and `write_json_atomic` calls
+`sync_all` on the manifest's own temporary file (`acquire.rs:590`), with no
+`fdatasync` or `sync_file_range` batching between blocks. Peak RSS is flat
+across the measured range because the acquisition reads and writes a
+fixed-size block at a time, and that is a property of the code rather than of
+the host.
+
 ## 15. Differential-tool inventory
 
 Required on the test host:
