@@ -64,7 +64,10 @@ is parsed. There is no silent reduced-assurance path.
 1. **The worker is not a privilege boundary.** It runs as the examiner's Unix
    user. A kernel or sandbox escape, or a defect in a native parser that yields
    arbitrary code execution, compromises that user's authority, not a lesser
-   one.
+   one. The four options for changing that were assessed in
+   [worker-privilege-boundary.md](worker-privilege-boundary.md), which
+   recommends a dedicated system user scoped to the DEB. That recommendation is
+   **not implemented** — this risk stands, and the release gate stays open.
 2. **The response cap is enforced from both sides.** `read_bounded` stops at the
    first byte past `MAX_RESPONSE_BYTES` and the poll loop kills the worker group
    immediately, so a flooding worker cannot be drained to EOF or to the
