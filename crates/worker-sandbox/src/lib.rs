@@ -26,7 +26,28 @@ const LANDLOCK_ACCESS_FS_IOCTL_DEV: u64 = 1 << 15;
 const PR_SET_NO_NEW_PRIVS: libc::c_int = 38;
 const SECCOMP_SET_MODE_FILTER: libc::c_uint = 1;
 const SECCOMP_FILTER_FLAG_TSYNC: libc::c_ulong = 1;
-const AUDIT_ARCH_X86_64: u32 = 0xC000_003E;
+// The `AUDIT_ARCH_*` value the kernel reports for the architecture this binary
+// was built for. The filter compares it first, and a filter that names another
+// architecture's value never matches: the fall-through is
+// SECCOMP_RET_KILL_PROCESS, so the worker is killed by its own filter on its
+// first syscall rather than confined by it. This is the one statement in the
+// filter whose wrongness is fatal instead of merely permissive, which is why it
+// is selected per target rather than assumed.
+//
+// Each value is `EM_<arch> | __AUDIT_ARCH_64BIT | __AUDIT_ARCH_LE` from
+// /usr/include/linux/audit.h. libc exports neither constant, so the values are
+// written out; the test at the bottom of this file checks the one the kernel
+// reports against the one this filter uses.
+#[cfg(target_arch = "x86_64")]
+const AUDIT_ARCH: u32 = 0xC000_003E; // EM_X86_64(62) | 64BIT | LE
+#[cfg(target_arch = "aarch64")]
+const AUDIT_ARCH: u32 = 0xC000_00B7; // EM_AARCH64(183) | 64BIT | LE
+#[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+compile_error!(
+    "no AUDIT_ARCH_* value is defined for this architecture, so the seccomp \
+     filter's architecture guard could never match and the worker would be \
+     killed on its first syscall; define AUDIT_ARCH for this target"
+);
 const BPF_LD: u16 = 0x00;
 const BPF_W: u16 = 0x00;
 const BPF_ABS: u16 = 0x20;
@@ -380,10 +401,16 @@ pub fn apply_landlock(policy: &SandboxPolicy) -> Result<(), SandboxError> {
     Ok(())
 }
 
-pub fn apply_seccomp_restrictions() -> Result<(), SandboxError> {
+/// Build the seccomp BPF program that `apply_seccomp_restrictions` installs.
+///
+/// Separate from the installation so the program itself can be asserted on: a
+/// filter whose architecture guard is wrong is fatal, and installing it is a
+/// one-way operation in the calling process, so the check has to happen before
+/// the syscall rather than after it.
+fn seccomp_filter_program() -> Vec<libc::sock_filter> {
     let mut filter = Vec::with_capacity(ALLOWED_SYSCALLS.len() * 2 + 6);
     filter.push(statement(BPF_LD | BPF_W | BPF_ABS, 4));
-    filter.push(jump(BPF_JMP | BPF_JEQ | BPF_K, AUDIT_ARCH_X86_64, 1, 0));
+    filter.push(jump(BPF_JMP | BPF_JEQ | BPF_K, AUDIT_ARCH, 1, 0));
     filter.push(statement(BPF_RET | BPF_K, libc::SECCOMP_RET_KILL_PROCESS));
     filter.push(statement(BPF_LD | BPF_W | BPF_ABS, 0));
     for syscall in ALLOWED_SYSCALLS {
@@ -397,6 +424,11 @@ pub fn apply_seccomp_restrictions() -> Result<(), SandboxError> {
         BPF_RET | BPF_K,
         libc::SECCOMP_RET_ERRNO | libc::EPERM as u32,
     ));
+    filter
+}
+
+pub fn apply_seccomp_restrictions() -> Result<(), SandboxError> {
+    let mut filter = seccomp_filter_program();
     let mut program = libc::sock_fprog {
         len: filter.len() as u16,
         filter: filter.as_mut_ptr(),
@@ -417,6 +449,84 @@ pub fn apply_seccomp_restrictions() -> Result<(), SandboxError> {
         return Err(last_error("seccomp filter installation failed"));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod seccomp_architecture_tests {
+    use super::*;
+
+    /// The machine the running kernel reports, read from `uname(2)` rather than
+    /// from a compile-time `cfg`, so the assertion compares the constant the
+    /// filter uses against the kernel that will evaluate it.
+    fn running_machine() -> String {
+        let mut uts = std::mem::MaybeUninit::<libc::utsname>::zeroed();
+        // SAFETY: `uts` is a valid, exclusively-owned utsname; uname writes it
+        // completely on success.
+        let rc = unsafe { libc::uname(uts.as_mut_ptr()) };
+        assert_eq!(rc, 0, "uname(2) failed while reading the machine type");
+        let uts = unsafe { uts.assume_init() };
+        let bytes: Vec<u8> = uts
+            .machine
+            .iter()
+            .take_while(|&&c| c != 0)
+            .map(|&c| c as u8)
+            .collect();
+        String::from_utf8_lossy(&bytes).into_owned()
+    }
+
+    /// The defect this test exists for: the filter compared `AUDIT_ARCH_X86_64`
+    /// on every target, so on any other architecture the guard failed for every
+    /// syscall and fell through to `SECCOMP_RET_KILL_PROCESS`. The worker would
+    /// have been killed by its own filter on its first syscall — on arm64 the
+    /// whole workspace test run would have failed this way — instead of being
+    /// confined by it.
+    #[test]
+    fn the_filter_architecture_is_the_one_the_kernel_reports() {
+        let expected = match running_machine().as_str() {
+            "x86_64" => 0xC000_003E_u32,  // EM_X86_64(62) | 64BIT | LE
+            "aarch64" => 0xC000_00B7_u32, // EM_AARCH64(183) | 64BIT | LE
+            other => panic!("no AUDIT_ARCH value is known for machine {other}"),
+        };
+        assert_eq!(
+            AUDIT_ARCH, expected,
+            "the seccomp filter guards on {AUDIT_ARCH:#010x} but the running kernel \
+             reports {expected:#010x} for {}: every syscall would fall through to \
+             SECCOMP_RET_KILL_PROCESS",
+            running_machine()
+        );
+    }
+
+    /// The guard is the first comparison the program makes, and a match must
+    /// skip the kill. Asserting on the built program, rather than on the
+    /// constant alone, catches a reordering that would let a foreign
+    /// architecture reach the allow-list.
+    #[test]
+    fn the_architecture_guard_precedes_and_gates_the_allow_list() {
+        let program = seccomp_filter_program();
+        assert!(program.len() > 4, "the filter program is too short to guard");
+        assert_eq!(
+            program[0].k, 4,
+            "the first statement must load seccomp_data.arch (offset 4)"
+        );
+        assert_eq!(
+            program[1].k, AUDIT_ARCH,
+            "the second statement must compare the running architecture"
+        );
+        assert_eq!(
+            (program[1].jt, program[1].jf),
+            (1, 0),
+            "a matching architecture must skip the kill and a foreign one must not"
+        );
+        assert_eq!(
+            program[2].k,
+            libc::SECCOMP_RET_KILL_PROCESS,
+            "a foreign architecture must be killed, not merely denied"
+        );
+        assert_eq!(
+            program[3].k, 0,
+            "the syscall number load must follow the architecture guard"
+        );
+    }
 }
 
 fn set_limit(
