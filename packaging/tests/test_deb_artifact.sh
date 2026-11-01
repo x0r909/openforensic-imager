@@ -53,6 +53,11 @@ grep -q './usr/share/doc/openforensic-imager/LICENSE.GPL-3.0' "$deb.contents"
 grep -q './usr/share/man/man8/openforensic-imager.8.gz' "$deb.contents"
 grep -q './usr/share/man/man8/ofi-parser-worker.8.gz' "$deb.contents"
 
+extract_root=$(mktemp -d)
+worker_root=$(mktemp -d)
+trap 'rm -rf "$extract_root" "$worker_root"' EXIT
+dpkg-deb --extract "$deb" "$extract_root"
+
 # A man page that is installed but does not render is not a man page. gzip -9n
 # is asserted too: a different compression level changes the archive bytes.
 while IFS= read -r -d '' page; do
@@ -65,10 +70,17 @@ while IFS= read -r -d '' page; do
     rm -f "$page.warnings"
 done < <(find "$extract_root/usr/share/man" -name '*.gz' -print0)
 
-extract_root=$(mktemp -d)
-worker_root=$(mktemp -d)
-trap 'rm -rf "$extract_root" "$worker_root"' EXIT
-dpkg-deb --extract "$deb" "$extract_root"
+# The man pages document CLI flags, so a flag that moves has to fail here
+# rather than drift out of the documentation. This asserts the application and
+# the worker still accept every option their pages name. The capture goes to the
+# scratch directory, not into the extracted tree: a file this test writes there
+# would carry this shell's umask and then be reported by the mode check below as
+# a packaging defect.
+env -u LD_LIBRARY_PATH QT_QPA_PLATFORM=offscreen \
+    "$extract_root/usr/bin/openforensic-imager" --help >"$worker_root/help.txt"
+for flag in --self-test --screenshot --dark --help --version; do
+    grep -q -- "$flag" "$worker_root/help.txt"
+done
 
 # Directories 0755, shared libraries 0644 (policy 8.1), other data files 0644,
 # executables 0755. Checked against the extracted tree rather than the contents
@@ -115,9 +127,8 @@ fi
 grep -q 'GNU GENERAL PUBLIC LICENSE' \
     "$extract_root/usr/share/doc/openforensic-imager/LICENSE.GPL-3.0"
 
-# A stripped release binary has no symbol table left. `.symtab` presence is
-# the same condition lintian reports as unstripped-binary-or-object. `.symtab` presence is
-# the same condition lintian reports as unstripped-binary-or-object.
+# A stripped release binary has no symbol table left. `.symtab` presence is the
+# same condition lintian reports as unstripped-binary-or-object.
 for binary in \
     "$extract_root/usr/bin/openforensic-imager" \
     "$extract_root/usr/bin/ofi-parser-worker" \

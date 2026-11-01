@@ -16,6 +16,7 @@ build_set() {
     local build_log
     local deb_manifest
     local appimage_manifest
+    local flatpak_manifest
     local sbom_manifest
     local deb_hash
     local deb_size
@@ -37,12 +38,19 @@ build_set() {
         OFI_BUILD_DIR="$build" \
         CARGO_TARGET_DIR="$target" \
             "$repo_root/scripts/package-appimage.sh" --skip-build
+
+        OFI_OUTPUT_DIR="$output" \
+        OFI_BUILD_DIR="$build" \
+        CARGO_TARGET_DIR="$target" \
+            "$repo_root/scripts/package-flatpak.sh" --skip-build
     )
 
     deb_manifest=$(awk '$1 == "OFI_ARTIFACT" && $2 == "DEB" { print $4, $5 }' \
         <<<"$build_log")
     appimage_manifest=$(awk \
         '$1 == "OFI_ARTIFACT" && $2 == "APPIMAGE" { print $4, $5 }' \
+        <<<"$build_log")
+    flatpak_manifest=$(awk '$1 == "OFI_FLATPAK_CONTENT" { print $2, $3, $4 }' \
         <<<"$build_log")
     # The SBOM ships inside the DEB, so a reproducible package needs a
     # reproducible bill of materials too.
@@ -58,6 +66,11 @@ build_set() {
         return 1
     fi
 
+    if [[ -z "$flatpak_manifest" ]]; then
+        printf 'build set %s did not report Flatpak content\n' "$label" >&2
+        return 1
+    fi
+
     read -r deb_hash deb_size <<<"$deb_manifest"
     read -r appimage_hash appimage_size <<<"$appimage_manifest"
     if [[ "$label" == "a" ]]; then
@@ -66,12 +79,14 @@ build_set() {
         appimage_a_hash=$appimage_hash
         appimage_a_size=$appimage_size
         sbom_a_hash=${sbom_manifest%% *}
+        flatpak_a_manifest=$flatpak_manifest
     else
         deb_b_hash=$deb_hash
         deb_b_size=$deb_size
         appimage_b_hash=$appimage_hash
         appimage_b_size=$appimage_size
         sbom_b_hash=${sbom_manifest%% *}
+        flatpak_b_manifest=$flatpak_manifest
     fi
     printf 'Build set %s complete\n' "$label"
 }
@@ -106,5 +121,21 @@ if [[ -n "${sbom_a_hash:-}" && "$sbom_a_hash" != "${sbom_b_hash:-}" ]]; then
     exit 1
 fi
 printf 'SBOM SHA-256 %s\n' "${sbom_a_hash:-skipped}"
+
+# The Flatpak bundle is exempt from the byte comparison above: `build-export`
+# records per-object timestamps and `build-bundle` writes a summary with an
+# mtime, so two identical builds produce different bundle bytes. Its content is
+# compared instead — the `metadata` file and a per-file baseline of `files/`.
+# This is weaker than a byte comparison and is stated as such: a bundle that
+# differs only in an archive mtime passes, and a bundle that differs in one
+# shipped byte fails.
+if [[ "$flatpak_a_manifest" != "$flatpak_b_manifest" ]]; then
+    printf 'Flatpak content mismatch\na: %s\nb: %s\n' \
+        "$flatpak_a_manifest" "$flatpak_b_manifest" >&2
+    exit 1
+fi
+printf 'Flatpak bundle: excluded from byte comparison (build-export records object timestamps)\n'
+printf 'Flatpak content: %s files, metadata SHA-256 %s, files/ SHA-256 %s\n' \
+    ${flatpak_a_manifest}
 
 printf 'Reproducible package comparison passed\n'

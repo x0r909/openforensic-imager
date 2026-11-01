@@ -116,6 +116,46 @@ ofi_strip_stage() {
     done < <(find "$stage/usr/bin" "$stage/usr/lib" -type f -print0 2>/dev/null)
 }
 
+# A Flatpak bundle is not byte-reproducible by design: `flatpak build-export`
+# records per-object timestamps and `build-bundle` carries a summary with an
+# mtime, so comparing bundle SHA-256 across two builds fails for reasons that
+# have nothing to do with the build. What *is* comparable is the app content,
+# and it is the part that matters: the `metadata` file `build-finish` writes
+# (permissions, finish args, command) and the staged `files/` tree. Print
+# `<count> <metadata-sha256> <files-sha256>` for one line of comparison.
+ofi_flatpak_content_manifest() {
+    local of_root=$1
+    local metadata_hash
+    local files_hash
+    local file_count
+
+    if [[ ! -f "$of_root/metadata" || ! -d "$of_root/files" ]]; then
+        printf 'flatpak build tree is incomplete: %s\n' "$of_root" >&2
+        return 1
+    fi
+
+    metadata_hash=$(sha256sum "$of_root/metadata" | awk '{ print $1 }')
+    file_count=$(find "$of_root/files" \( -type f -o -type l \) | wc -l \
+        | tr -d ' ')
+    # Symlinks are recorded as their target, not as the content of whatever
+    # they point at: `build-finish` and the SDK's staging create symlinks whose
+    # targets are what a rebuild has to reproduce.
+    files_hash=$(
+        cd "$of_root/files" || exit 1
+        {
+            while IFS= read -r -d '' path; do
+                printf 'FILE %s %s\n' "$path" \
+                    "$(sha256sum "$path" | awk '{ print $1 }')"
+            done < <(find . -type f -print0 | LC_ALL=C sort -z)
+            while IFS= read -r -d '' path; do
+                printf 'LINK %s %s\n' "$path" "$(readlink "$path")"
+            done < <(find . -type l -print0 | LC_ALL=C sort -z)
+        } | sha256sum | awk '{ print $1 }'
+    )
+
+    printf '%s %s %s\n' "$file_count" "$metadata_hash" "$files_hash"
+}
+
 ofi_skip_bundled_library() {
     case "$(basename "$1")" in
         ld-linux-*|linux-vdso.so.*|libc.so.*|libdl.so.*|libm.so.*|\
