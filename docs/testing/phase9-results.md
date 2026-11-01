@@ -75,6 +75,91 @@ code, not a finding. Excluded for that reason: `acquisition`, `filesystem`,
 `reporting` (depends on `acquisition`), and `job-manager` (`acquisition` is a
 dev-dependency, so its test binaries link libewf too).
 
+## Miri
+
+```
+cargo +nightly miri test -p forensic-core -p hashing -p viewer
+```
+
+Miri interprets the compiled MIR rather than running native code, so it detects
+undefined behaviour the sanitizers cannot see: out-of-bounds pointer arithmetic
+that happens to land in valid memory, uninitialized reads, aliasing violations,
+and integer overflow in the abstract machine. It is a proof about *our* code
+only — every C library the workspace links is opaque to it, and TSK, libewf, and
+the bundled SQLite are exactly that. The scope is therefore the three crates
+that are pure Rust end to end.
+
+Result (2026-11-01): no undefined behaviour. `forensic-core` 7 tests ok,
+`hashing` 3 tests ok. Log: `packaging/build/miri.log` (git-ignored).
+
+`chunking_does_not_change_sha256` dominates the run at 2504 s; the other
+suites finish in under a second each. It is a property test that hashes whole
+buffers through every chunk boundary, and under interpretation each of those
+SHA-256 rounds is executed step by step. The wall clock is the interpreter, not
+the code under test.
+
+### `viewer` aborts under isolation, in proptest rather than in our code
+
+`viewer` compiles for Miri but its test binary aborts:
+
+```
+cargo +nightly miri test -p viewer
+```
+
+```
+unsupported operation: `getcwd` not available when isolation is enabled
+  ... proptest::test_runner::failure_persistence::file::absolutize_source_file_with_cwd
+```
+
+The call is not the crate's. It is proptest 1.12's *failure persistence* layer,
+which writes a failing seed to `proptest-regressions/` and calls
+`std::env::current_dir` to absolutize the source path
+(`proptest-1.12.0/src/test_runner/failure_persistence/file.rs:220`, reached
+from `runner.rs:592`). Miri's isolation refuses `getcwd`. Setting
+`PROPTEST_DISABLE_FAILURE_PERSISTENCE=1` does not help, because isolation hides
+the environment too — proptest cannot read the variable that would turn the
+layer off.
+
+Disabling isolation makes all 19 tests pass, including the two that
+otherwise abort. Measured with `MIRIFLAGS=-Zmiri-disable-isolation`:
+
+```
+cargo +nightly miri test -p viewer     # MIRIFLAGS=-Zmiri-disable-isolation
+```
+
+Result: 19 passed, 0 failed (log
+`packaging/build/miri-viewer-noisolation.log`). So the abort is the harness, not
+the code: `viewer` is byte-clean under Miri once the interpreter is allowed the
+syscalls proptest's own bookkeeping needs. The default-isolation run is
+recorded here as the list of tests Miri cannot execute, and the no-isolation run
+as the actual check.
+
+No `crates/viewer` test is skipped by the guard that `known_vectors` needs;
+the two crates abort for unrelated reasons — `known_vectors` on `open`, because
+the test itself reads a file, and `viewer` on `getcwd`, because a dependency
+does.
+
+### Isolation and the repository README
+
+`known_vectors` has one test that reads the repository README and compares the
+crate's SHA-256 against `sha256sum`. Miri enforces isolation by default, and
+`open` is unsupported under it, so that test aborted the run with
+`unsupported operation: 'open' not available when isolation is enabled`. The
+failure says nothing about the crate — it is the interpreter refusing a
+syscall. The test now guards on `!cfg!(miri)` at runtime rather than
+`#[cfg(miri)]`: Miri evaluates the same cfg-selected code path as a normal
+build, so a compile-time attribute would not skip it.
+
+Re-run after the guard (`cargo +nightly miri test -p hashing --test
+known_vectors`, log `packaging/build/miri-known-vectors.log`): exit 0, 3 passed,
+0 failed, 0 ignored, 1.53 s. The two vector tests that need no host filesystem
+still run under Miri; only the `sha256sum` comparison is skipped.
+
+For a run that exercises that comparison too, opt in to the host filesystem with
+`MIRIFLAGS=-Zmiri-disable-isolation`. It is not the default because it also
+grants the interpreted program access to the environment and the clock, which
+gives up part of what Miri is being used to establish.
+
 ## Fuzzing (ASan budget)
 
 ```
