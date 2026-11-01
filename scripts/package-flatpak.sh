@@ -50,9 +50,19 @@ mv "$app" "$of_root/files/bin/openforensic-imager.real"
 install -m755 packaging/flatpak/openforensic-imager-wrapper.sh \
     "$of_root/files/bin/openforensic-imager"
 
+# The worker is the binary that links libtsk and libewf. The application's own
+# cdylib stopped carrying those DT_NEEDED entries when parsing moved into the
+# worker, so following the cdylib's `ldd` finds nothing — the sandbox has no
+# system copies either, and the worker cannot be handed an LD_LIBRARY_PATH
+# because the desktop spawns it with a cleared environment. Both binaries are
+# walked so a future change that puts a forensic dependency back in the cdylib
+# is covered without editing this list.
 lib_dir="$of_root/files/lib/openforensic-imager"
-native="$lib_dir/libnative_bindings.so"
-ofi_copy_forensic_libraries "$native" "$lib_dir"
+mkdir -p "$lib_dir"
+for binary in "$of_root/files/bin/ofi-parser-worker" \
+    "$lib_dir/libnative_bindings.so"; do
+    ofi_copy_forensic_libraries "$binary" "$lib_dir"
+done
 
 mapfile -t finish_args <packaging/flatpak/finish-args.txt
 flatpak build-finish "$of_root" --command=openforensic-imager \
@@ -73,3 +83,8 @@ flatpak build-bundle --arch=x86_64 "$repo" "$artifact" \
 )
 
 printf '%s\n' "$artifact"
+# The bundle itself is not byte-reproducible (build-export records object
+# timestamps), so report the comparable content instead: the metadata file and
+# the staged files/ tree.
+flatpak_manifest=$(ofi_flatpak_content_manifest "$of_root")
+printf 'OFI_FLATPAK_CONTENT %s\n' "$flatpak_manifest"
