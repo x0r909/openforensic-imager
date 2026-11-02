@@ -19,6 +19,14 @@ Consequences:
 - Larger AppImage and DEB payloads unless a separate native dependency package
   is used.
 
+Status note (Task C6): the decision above was unqualified, and the artifacts
+cannot all implement it the same way. The linking model per artifact — the DEB
+depends on the distribution's libraries, the AppImage and Flatpak bundle pinned
+ones, and a static link was rejected because the distribution ships no
+`libafflib.a` — is decided in
+[adr-001-linking-model.md](adr-001-linking-model.md), which also names the TSK
+license review that gates the two bundling artifacts.
+
 ## ADR-002: Rust core with a narrow C ABI
 
 Context: The required stack combines Rust core libraries with Qt 6 and QML.

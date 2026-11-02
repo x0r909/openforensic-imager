@@ -33,10 +33,22 @@ The generated CycloneDX SBOM contains every Cargo workspace package and resolved
 dependency with its declared license expression. `Cargo.lock` is the
 authoritative crate version set.
 
-OpenForensic Imager is licensed `GPL-3.0-or-later`. That is compatible with
-every dependency listed above without additional relinking obligations: Qt 6 is
-used under its GPL option rather than LGPL, and libewf's LGPL-3.0 terms are
-satisfied by the project's own GPL-3.0-or-later grant.
+OpenForensic Imager is licensed `GPL-3.0-or-later`. That is compatible with the
+listed dependencies without additional relinking obligations for libewf, whose
+LGPL-3.0 terms the project's own GPL grant satisfies; libewf is bundled as a
+shared object, so its relinking requirement is met by the artifact itself. Qt 6
+is used under its GPL option rather than LGPL.
+
+The Sleuth Kit is **not** reviewed as a single license. The distribution's
+`/usr/share/doc/libtsk-dev/copyright` records 21 stanzas, including `CPL-1.0`
+(which the FSF does not list as GPL-compatible), `IBM-PL-1.0`, `Apache-2.0`,
+`MIT`, `BSD-3-Clause`, `GPL-2+`, `GPL-3+ with Autoconf exception`, and
+`CC-BY-SA-3.0`. Because the AppImage and the Flatpak redistribute the compiled
+result, they may not be described as a reviewed dependency set until those
+stanzas are enumerated and the `CPL-1.0` files are resolved. The DEB is not
+affected: it links the distribution's library, which the distribution already
+distributes under its own terms. This is recorded as a blocker in
+[`docs/architecture/adr-001-linking-model.md`](../../docs/architecture/adr-001-linking-model.md).
 
 ## Packaging tools
 
@@ -55,5 +67,8 @@ org.kde.Platform 6.10 runtimes. It does not grant device access. Physical
 acquisition from this Flatpak is unsupported unless the runtime and permission
 model are separately reviewed.
 
-The Flatpak bundle is functionally tested but is not included in the current
-reproducibility comparison.
+The Flatpak bundle is functionally tested and is included in the reproducibility
+comparison by content manifest (file count, `metadata`, and `files/` digests)
+rather than by byte digest: `flatpak build-export` records object timestamps, so
+the bundle is not byte-reproducible by design and is exempt from the byte
+comparison that covers the DEB and the AppImage.

@@ -11,3 +11,27 @@ APPIMAGETOOL_NAME_x86_64=appimagetool-x86_64.AppImage
 APPIMAGETOOL_URL_aarch64=https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-aarch64.AppImage
 APPIMAGETOOL_SHA256_aarch64=c8e8c594f4375b072ab8ac71c669e5d0b619113291c750bade424e347183dbe3
 APPIMAGETOOL_NAME_aarch64=appimagetool-aarch64.AppImage
+
+# Pinned native dependency source, per docs/architecture/adr-001-linking-model.md.
+# The AppImage and the Flatpak build these from source and ship the result; the
+# DEB depends on the distribution's copies instead, so these pins do not apply
+# to it. Digests were computed from the downloaded release assets themselves.
+#
+# NOT COMPLETE: the build flags are not recorded yet, so these entries pin the
+# inputs and not the result — two builds of the same tarball could still enable
+# different optional formats. Task C6 Step 3 must add the flags before these are
+# treated as a full pin, and nothing consumes these variables today.
+#
+# TSK ships licenses/{cpl1.0,IBM-LICENSE,Apache-LICENSE-2.0,mit,bsd,...}.txt.
+# The tsk/ library core is CPL-1.0; see the review blocker in the linking-model
+# note before redistributing a build of it.
+SLEUTHKIT_VERSION=4.12.1
+SLEUTHKIT_URL=https://github.com/sleuthkit/sleuthkit/releases/download/sleuthkit-4.12.1/sleuthkit-4.12.1.tar.gz
+SLEUTHKIT_SHA256=6b2de0baabc6a38429a33993114ca3820329b477d5038cbf45fcf69fca8addfd
+
+# libyal/libewf-legacy, not libyal/libewf: the latter's newest tags are
+# experimental and pre-release, and 20140816 is the line the distribution's
+# libewf2 is built from. LGPL-3+.
+LIBEWF_VERSION=20140816
+LIBEWF_URL=https://github.com/libyal/libewf-legacy/releases/download/20140816/libewf-20140816.tar.gz
+LIBEWF_SHA256=6b2d078fb3861679ba83942fea51e9e6029c37ec2ea0c37f5744256d6f7025a9
