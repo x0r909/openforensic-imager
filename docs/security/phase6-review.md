@@ -175,9 +175,13 @@ defects are resolved.
 - GUI accessibility and external viewer isolation remain outside this review.
 - The worker response cap bounds retained bytes, not read work; a response that
   crosses it is discarded entirely.
-- The seccomp policy is a deny-list, so a future syscall is permitted by default.
+- The seccomp policy is now a default-deny allow-list (Task B1), so an
+  unlisted syscall gets `EPERM` rather than being permitted. This bullet used to
+  read the opposite and was corrected during Phase 9.
 - Cancellation kills the worker process group, leaving an orphan staging
-  directory that no reaper surfaces.
+  directory that no reaper surfaces *at the time of this review*. Phase 9 added
+  a `.ofi-staging.json` marker and `acquisition::reap_stale_staging`, so an
+  orphan is now reaped once its process is gone and it is older than 24 h.
 
 ## Gate decision
 

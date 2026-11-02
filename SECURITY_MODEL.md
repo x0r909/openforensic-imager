@@ -293,15 +293,17 @@ The following controls now have executable negative or differential evidence:
 
 - Landlock denies reads outside the allowlist and denies writes without a grant.
 - seccomp denies network sockets, process creation, and `setpriority` in the
-  sandbox child. `setpriority` is not a syscall any deny-list would name; it is
-  refused because the filter allows only what the worker actually issues.
+  sandbox child. The filter is a default-deny allow-list, not a deny-list, so
+  an unlisted syscall gets `EPERM`; `setpriority` is refused because the worker
+  never issues it.
 - Acquisition source opens are traced as read-only.
 - Extraction stays under the opened capability root across repeated path
   replacement.
 - Audit tampering, reordering, deletion, truncation, and concurrent writers are
   detected or rejected.
-- Arbitrary C ABI JSON and viewer bytes are covered by stable property tests and
-  short fuzz smoke runs.
+- Arbitrary C ABI JSON and viewer bytes are covered by stable property tests,
+  and, since Phase 9, by sanitizer runs and a ten-minute-per-target fuzz budget
+  recorded in [`docs/testing/phase9-results.md`](docs/testing/phase9-results.md).
 
 Phase 8 connects image, partition, filesystem, acquisition, verification,
 preview, signature, and extraction jobs to `ofi-parser-worker`. TSK, libewf,

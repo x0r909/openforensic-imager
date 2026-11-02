@@ -140,14 +140,20 @@ is parsed. There is no silent reduced-assurance path.
 6. **Worker identity is fixable only in debug builds.** `OFI_PARSER_WORKER` is
    honoured only under `cfg!(debug_assertions)`; a release build always uses the
    beside-application binary. The environment is still cleared before spawn.
-7. **Sanitizer and long-duration fuzz coverage are not run on this host.** No
-   ASan, MSan, or scheduled fuzz budget is claimed.
+7. **Sanitizer and fuzz coverage was completed after this review (Phase 9).**
+   ASan over the workspace, scoped MSan, and a ten-minute-per-target fuzz budget
+   ran to completion with no report and no artifact; the evidence is in
+   [`../testing/phase9-results.md`](../testing/phase9-results.md) and the budget
+   is repeatable through `scripts/fuzz-budget.sh`. What is still not claimed:
+   TSK, libewf, and SQLite are uninstrumented C, the Qt/QML desktop has no
+   sanitizer flags, and a fixed budget is a floor rather than proof; multi-
+   terabyte and long-duration runs still need release hardware.
 
 ## Release gate decision
 
 Phase 8 closes the parser-dispatch portion of P6-SEC-001. The release security
-gate is **not** fully passed: sanitizer coverage is unavailable, the worker is
-not a privilege boundary, and the residual risks above are accepted limitations
-rather than fixes.
+gate is **not** fully passed: the worker is not a privilege boundary, and the
+residual risks above are accepted limitations rather than fixes. The sanitizer
+condition this review left open was met in Phase 9 (risk 7).
 
 See [phase6-review.md](phase6-review.md) for the full finding list.

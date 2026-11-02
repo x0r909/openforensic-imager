@@ -579,14 +579,17 @@ recorded in
 
 These are recorded as accepted limitations, not open tasks:
 
-- The seccomp policy is a deny-list rather than the allow-list the security model
-  describes.
-- Cancellation is delivered by SIGKILL, so `acquire_reader`'s cooperative check
-  never fires. The retained staging directory is reported, but no reaper or age
-  marker cleans orphaned staging directories.
-- The EWF read grant covers the image directory so sibling segments can be
-  opened.
-- No sanitizer or scheduled fuzz coverage exists on this host.
+- Cancellation is delivered by SIGKILL, and `acquire_reader` now reaps orphaned
+  staging directories on the way in (`acquire_reader` writes a
+  `.ofi-staging.json` marker and `acquisition::reap_stale_staging` removes a
+  retained directory whose marker's process is gone and which is older than
+  24 h). The residual limitation is that a job cancelled inside the 24 h window
+  still occupies its retained bytes until the age passes — that window is what
+  makes ACQ-011 retention meaningful.
+- The EWF read grant is computed once, before the parse, and names the image's
+  segments individually (`libewf_bindings::segment_paths`) rather than the
+  parent directory. Segments present when the policy is built stay readable for
+  the job's duration even after the parse stops needing them.
 
 ## Self-review
 
