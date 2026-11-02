@@ -417,6 +417,13 @@ cleanup() {
     # would have leaked every one of these files.
     rm -f "$boot_img" "$grub_cfg" "$grub_cfg_new"
     if [[ "$keep" -eq 0 ]]; then
+        # The overlay is the largest thing this script creates — tens of GiB at
+        # a --disk-gb that fits a Rust build — and every run makes a fresh one.
+        # Leaving it behind contradicted the note above the overlay creation,
+        # which promises it is deleted unless --keep, and repeated runs quietly
+        # filled the disk. `$disk` is guarded because an exit before the overlay
+        # is created (a base-image digest mismatch) reaches this with it unset.
+        [[ -n "${disk:-}" ]] && rm -f "$disk"
         rm -rf "$seed_dir" "$seed" "$key" "$key.pub" "$work_dir/$arch-vars.fd"
     fi
 }
@@ -461,6 +468,19 @@ ssh_opts=(
     -i "$key"
 )
 guest() { ssh "${ssh_opts[@]}" ofi@127.0.0.1 "$@"; }
+
+# `-P`, not ssh's `-p`: the two tools spell the port differently, and scp reads a
+# lowercase `-p` as "preserve times", so passing ssh_opts here made the port
+# number a source file ("cannot stat '38320'") and the copy failed before it
+# connected. Only the port differs between the two invocations; the rest of
+# ssh_opts applies.
+scp_opts=()
+for opt in "${ssh_opts[@]}"; do
+    case "$opt" in
+        -p) scp_opts+=(-P) ;;
+        *) scp_opts+=("$opt") ;;
+    esac
+done
 
 # Wait for SSH, then for cloud-init. The two are separate because SSH answering
 # is not the same as the guest being configured: cloud-init's user and key
@@ -570,13 +590,21 @@ case "$mode" in
         # a read-only share cannot hold `target/`, and a writable share lets a
         # bug in the guest write into the working tree.
         log "copying the workspace into the guest"
-        tar -C "$repo_root" -cf - \
-            --exclude=./target --exclude=./packaging/build \
-            --exclude=./packaging/output --exclude=./.git \
-            --exclude=./tests/fixtures/generated \
-            . | guest 'mkdir -p ~/openforensic-imager && tar -C ~/openforensic-imager -xf -'
+        # The excludes are the difference between a 3 GiB and a 0.5 GiB
+        # transfer, and this copy crosses SSH into a TCG-emulated guest, so it
+        # is the slowest part of a build run that is not the build itself.
+        # `tests/fuzz/target` is a cargo target directory like `./target` and is
+        # excluded for the same reason. `build/` and `FTK-Imager-*/` are
+        # untracked developer state: the first is the host's CMake tree, whose
+        # object files would be the host architecture and are never read in the
+        # guest, and the second is a supplied installer that must not be copied
+        # off this host. An allow-list is used instead of more --exclude lines
+        # because a deny-list misses the next large directory someone creates,
+        # and what the guest build needs is exactly the tracked tree.
+        git -C "$repo_root" ls-files -z | tar -C "$repo_root" -cf - --null -T - \
+            | guest 'mkdir -p ~/openforensic-imager && tar -C ~/openforensic-imager -xf -'
         run_in_guest "install build dependencies" \
-            'sudo apt-get update && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates build-essential cmake ninja-build pkg-config curl git file libtsk-dev libewf-dev qt6-base-dev qt6-declarative-dev qt6-svg-dev e2fsprogs ewf-tools mtools dosfstools ntfs-3g exfatprogs strace util-linux gdisk fdisk imagemagick' \
+            'sudo apt-get update && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates build-essential cmake ninja-build pkg-config curl git file libtsk-dev libewf-dev qt6-base-dev qt6-declarative-dev qt6-svg-dev e2fsprogs ewf-tools mtools dosfstools ntfs-3g exfatprogs strace util-linux gdisk fdisk imagemagick desktop-file-utils' \
             && status=0 || status=$?
         if [[ "$status" -eq 0 ]]; then
             # The Ubuntu cloud image ships no Rust, and the workspace pins a
@@ -612,6 +640,53 @@ case "$mode" in
             run_in_guest "artifact digests" \
                 'cd ~/openforensic-imager && sha256sum packaging/output/*'
         fi
+        # The artifacts exist only in the guest, and the guest is disposable: a
+        # digest printed into a log is not an artifact, so a run that stopped
+        # here could not satisfy "copy the arm64 artifacts out". They are
+        # copied into a directory of their own so the host's own amd64 builds
+        # under packaging/output cannot be confused with them.
+        if [[ "$status" -eq 0 ]]; then
+            copy_dir="$work_dir/$arch-artifacts"
+            rm -rf "$copy_dir"
+            mkdir -p "$copy_dir"
+            log "--- guest: copy the artifacts out"
+            scp -q "${scp_opts[@]}" \
+                'ofi@127.0.0.1:~/openforensic-imager/packaging/output/*' \
+                "$copy_dir/" 2>&1 | tee -a "$console_log" || status=${PIPESTATUS[0]}
+        fi
+        if [[ "$status" -eq 0 ]]; then
+            # Every packaging script writes a .sha256 beside its artifact, and
+            # those files were produced inside the guest. Checking them here is
+            # what makes the copy trustworthy: it proves the bytes the host now
+            # holds are the bytes the guest built, rather than a truncated or
+            # re-encoded transfer. `shopt -s nullglob` because a glob that
+            # matches nothing is passed through literally by bash and would make
+            # `sha256sum -c` fail on a filename rather than report no checks.
+            shopt -s nullglob
+            checks=("$copy_dir"/*.sha256)
+            shopt -u nullglob
+            if [[ "${#checks[@]}" -eq 0 ]]; then
+                log "the guest produced no .sha256 file; the copy cannot be verified"
+                status=1
+            else
+                ( cd "$copy_dir" && sha256sum -c ./*.sha256 ) 2>&1 \
+                    | tee -a "$console_log" || status=${PIPESTATUS[0]}
+            fi
+        fi
+        if [[ "$status" -eq 0 ]]; then
+            log "artifacts copied to $copy_dir and verified against the guest's own digests"
+        fi
+        # Step 4 of the plan ticks the ARM64 item only if the packages install
+        # and self-test inside the guest, so the run proves that itself rather
+        # than leaving it to a later manual pass over a guest that no longer
+        # exists. Done here because this is the only place the artifact and the
+        # clean system coexist. `./` matters: without it apt reads the argument
+        # as a package name rather than a path to a .deb.
+        if [[ "$status" -eq 0 ]]; then
+            run_in_guest "install the built package and self-test" \
+                'cd ~/openforensic-imager && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y ./packaging/output/*.deb && openforensic-imager --self-test && openforensic-imager --dark --self-test' \
+                && status=0 || status=$?
+        fi
         ;;
     install)
         if [[ -z "$artifact" ]]; then
@@ -621,18 +696,6 @@ case "$mode" in
             || { log "no artifact to install; pass --artifact or build one first"; exit 2; }
         log "installing $(basename "$artifact")"
         guest 'mkdir -p ~/artifact'
-        # `-P`, not ssh's `-p`: the two tools spell the port differently, and
-        # scp reads a lowercase `-p` as "preserve times", so passing ssh_opts
-        # here made the port number a source file ("cannot stat '38320'") and
-        # the copy failed before it connected. Only the port and the identity
-        # differ between the two invocations; the rest of ssh_opts applies.
-        scp_opts=()
-        for opt in "${ssh_opts[@]}"; do
-            case "$opt" in
-                -p) scp_opts+=(-P) ;;
-                *) scp_opts+=("$opt") ;;
-            esac
-        done
         scp -q "${scp_opts[@]}" "$artifact" ofi@127.0.0.1:~/artifact/ || { log "scp failed"; exit 1; }
         run_in_guest "install the package and self-test" \
             "sudo DEBIAN_FRONTEND=noninteractive apt-get install -y ./artifact/$(basename "$artifact") && openforensic-imager --self-test && openforensic-imager --dark --self-test" \
