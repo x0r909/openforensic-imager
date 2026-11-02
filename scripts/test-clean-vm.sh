@@ -60,10 +60,11 @@ Usage: test-clean-vm.sh [options]
   --disk-gb <n>          Guest disk size. Default 24.
   --memory-mb <n>        Guest memory. Default 4096.
   --cpus <n>             Guest vCPUs. Default 4. The guest runs the
-                         distribution's own udev and systemd, whose coldplug
-                         is CPU-bound; too few vCPUs on a busy host makes
-                         udev miss the device-unit timeouts and the guest
-                         lands in emergency mode.
+                         distribution's own udev and systemd, whose coldplug is
+                         CPU-bound under emulation. This run raises the guest's
+                         device-unit timeout in the overlay so a slow coldplug
+                         does not fail the boot; more vCPUs still make an
+                         emulated build finish sooner.
   --boot-timeout <n>     Seconds to wait for SSH. Default 600.
   --work-timeout <n>     Seconds to let the in-guest work run; 0 disables.
                          Default 0.
@@ -153,10 +154,25 @@ command -v qemu-img >/dev/null || { printf 'qemu-img not found\n' >&2; exit 2; }
 command -v xorriso >/dev/null || { printf 'xorriso not found\n' >&2; exit 2; }
 command -v ssh-keygen >/dev/null || { printf 'ssh-keygen not found\n' >&2; exit 2; }
 command -v ssh >/dev/null || { printf 'ssh not found\n' >&2; exit 2; }
+# The BOOT partition's grub.cfg is edited in the disposable overlay, before the
+# guest starts, to raise the systemd device-unit timeout (see the boot section).
+# `debugfs` is the only ext4 editor available without root.
+command -v debugfs >/dev/null || { printf 'debugfs not found; install e2fsprogs\n' >&2; exit 2; }
+# These two carry the timeout patch: python3 parses the GPT, qemu-io writes the
+# edited partition back into the overlay. Both are checked here because a
+# harness that reaches the patch without them fails in the middle of a run.
+command -v python3 >/dev/null || { printf 'python3 not found\n' >&2; exit 2; }
+command -v qemu-io >/dev/null || { printf 'qemu-io not found\n' >&2; exit 2; }
 
 work_dir=${work_dir:-"$repo_root/packaging/build/clean-vm"}
 mkdir -p "$work_dir"
+# Absolute paths, not the caller's: qemu-img resolves an overlay's backing file
+# relative to the overlay's own directory, so a relative image path becomes
+# "<work-dir>/<work-dir>/images/…" and the run dies with "Could not open backing
+# image" before it boots anything.
+work_dir=$(realpath "$work_dir")
 image=${image:-"$work_dir/images/$default_image"}
+image=$(realpath -m "$image")
 
 # A tmpfs is RAM: a 900 MiB base image plus a 24 GiB sparse overlay plus a
 # build tree is the wrong thing to hold in memory, and it makes the guest's
@@ -202,6 +218,137 @@ log "base image ok: $image ($digest)"
 disk="$work_dir/$arch-disk.qcow2"
 rm -f "$disk"
 qemu-img create -q -f qcow2 -F qcow2 -b "$image" "$disk" "${disk_gb}G" >/dev/null
+
+# --- Raise the guest's device-unit timeout in the overlay -------------------
+# The guest inherits systemd's default 90 s device-unit timeout, and under
+# emulation (arm64 in particular) udev coldplug is CPU-bound and can outlast it:
+# the boot partition's device times out, local-fs.target fails by dependency,
+# and the guest lands in emergency mode before SSH ever answers. Measured from
+# the guest's own journal at 4 vCPUs on a nearly idle host: coldplug ran
+# 223.0 -> 324.0 s while the timeout fired at 302.3 s.
+#
+# The timeout is settable only from the kernel cmdline or an in-image drop-in.
+# The guest boots shim -> GRUB -> /grub/grub.cfg on the BOOT partition, and that
+# config is reachable in the overlay without root, so the guest keeps its own
+# boot path — AAVMF firmware, the distribution's shim and GRUB — rather than
+# booting the kernel directly with -kernel/-append, which would bypass the
+# firmware the real machine uses and test a path no user has.
+#
+# The BOOT partition is copied out of the overlay, edited, and copied back. The
+# base image, whose digest is checked above, is never written; the overlay is
+# deleted at the end of the run unless --keep.
+grub_cfg_timeout_sec=600
+partition_offsets=$(
+    # Partition start and length, in 512-byte sectors, straight from the GPT:
+    # hardcoding them would silently patch the wrong region on a re-published
+    # image whose layout moved.
+    gpt=$(mktemp)
+    qemu-img dd -f qcow2 -O raw if="$disk" of="$gpt" bs=512 count=40 >/dev/null 2>&1
+    python3 -I - "$gpt" <<'PY'
+import struct, sys
+with open(sys.argv[1], 'rb') as fh:
+    data = fh.read()
+entries_lba = struct.unpack('<Q', data[512 + 72:512 + 80])[0]
+count = struct.unpack('<I', data[512 + 80:512 + 84])[0]
+entry_size = struct.unpack('<I', data[512 + 84:512 + 88])[0]
+base = entries_lba * 512
+# The EFI System and XBOOTLDR type GUIDs. BOOT is the XBOOTLDR partition that
+# holds /grub/grub.cfg; the root partition is neither, and copying 2.5 GiB out
+# of the overlay to look for a file it cannot contain is pure waste.
+ESPS = (b'\x28\x73\x2a\xc1\x1f\xf8\xd2\x11\xba\x4b\x00\xa0\xc9\x3e\xc9\x3b',
+        b'\xff\xc2\x13\xbc\xe6\x59\x62\x42\xa3\x52\xb2\x75\xfd\x6f\x71\x72')
+candidates = []
+for index in range(count):
+    entry = data[base + index * entry_size:base + (index + 1) * entry_size]
+    if entry[:16] == b'\0' * 16:
+        continue
+    if entry[:16] not in ESPS:
+        continue
+    first, last = struct.unpack('<QQ', entry[32:48])
+    candidates.append((last - first + 1, first))
+# Largest first. On this image that is the 923 MiB XBOOTLDR BOOT partition, and
+# the 99 MiB ESP that shares the same two type GUIDs is tried only if BOOT has
+# no grub.cfg. The order matters: the ESP is vfat, and `debugfs` reports that on
+# stdout while still exiting 0, so a smaller-first order makes the wrong
+# partition look like a successful patch (see the verification below).
+for length, first in sorted(candidates, reverse=True):
+    print(first, length)
+PY
+    rm -f "$gpt"
+)
+
+boot_img=$(mktemp)
+grub_cfg=$(mktemp)
+grub_cfg_new=$(mktemp)
+
+# The ESP and the BOOT partition share the EFI System / XBOOTLDR type GUIDs but
+# not a filesystem: BOOT is ext4, the ESP is vfat. `debugfs` on a vfat image
+# exits 0 and prints "<image> contains a vfat file system labelled 'UEFI'" on
+# stdout, so its output is not evidence the file was read — the ext2/3/4
+# superblock magic (0xEF53, at byte 1080) is checked instead, before anything is
+# written and before debugfs is trusted to have failed.
+is_ext4() {
+    python3 -I - "$1" <<'PY'
+import sys
+with open(sys.argv[1], 'rb') as fh:
+    fh.seek(1080)
+    sys.exit(0 if fh.read(2) == b'\x53\xef' else 1)
+PY
+}
+
+# The copy is done in 1 MiB blocks, not 512-byte sectors: a 923 MiB partition is
+# 1.9 million sector reads through the qcow2 chain and takes minutes, while the
+# same data in whole MiB takes seconds. GPT places every partition on a 1 MiB
+# boundary, which is what makes the block-aligned skip valid; a layout that is
+# not aligned is left unpatched rather than silently patched at the wrong offset.
+sectors_per_mib=2048
+patched=0
+while read -r start length; do
+    [[ -n "$start" ]] || continue
+    if (( start % sectors_per_mib != 0 )); then
+        log "partition at sector $start is not 1 MiB aligned; skipping the timeout edit"
+        continue
+    fi
+    skip_mib=$(( start / sectors_per_mib ))
+    # Read up to the next whole MiB so the file's tail is included, but write back
+    # exactly the partition's length so the edit cannot spill into its neighbour.
+    read_mib=$(( (length + sectors_per_mib - 1) / sectors_per_mib ))
+    write_bytes=$(( length * 512 ))
+    qemu-img dd -f qcow2 -O raw if="$disk" of="$boot_img" \
+        bs=1M skip="$skip_mib" count="$read_mib" >/dev/null 2>&1
+    is_ext4 "$boot_img" || continue
+    debugfs -R 'cat /grub/grub.cfg' "$boot_img" >"$grub_cfg" 2>/dev/null || continue
+    [[ -s "$grub_cfg" ]] || continue
+    sed -E "s|^([[:space:]]*linux[[:space:]].*)\$|\1 systemd.default_device_timeout_sec=$grub_cfg_timeout_sec|" \
+        "$grub_cfg" >"$grub_cfg_new"
+    # A grub.cfg whose `linux` lines do not match leaves the sed output
+    # byte-identical; writing that back would be a no-op reported as a patch.
+    cmp -s "$grub_cfg" "$grub_cfg_new" && continue
+    debugfs -w -R 'rm /grub/grub.cfg' "$boot_img" >/dev/null 2>&1
+    debugfs -w -R "write $grub_cfg_new /grub/grub.cfg" "$boot_img" >/dev/null 2>&1
+    # Read the edit back out of the image before it goes into the overlay: if the
+    # write did not take, the overlay is left byte-identical to the base image.
+    # Redirected to a file rather than piped to grep: `set -o pipefail` plus
+    # `grep -q` closing the pipe early would turn a successful match into 141.
+    debugfs -R 'cat /grub/grub.cfg' "$boot_img" >"$grub_cfg" 2>/dev/null || continue
+    grep -qF "systemd.default_device_timeout_sec=$grub_cfg_timeout_sec" "$grub_cfg" || continue
+    qemu-io -f qcow2 \
+        -c "write -s $boot_img $((start * 512)) $write_bytes" \
+        "$disk" >/dev/null 2>&1
+    patched=1
+    break
+done <<<"$partition_offsets"
+if [[ "$patched" -ne 1 ]]; then
+    # Not a warning: without the raised timeout an emulated guest fails its
+    # device units and boots to emergency mode, where SSH never answers. A run
+    # that proceeds anyway spends its whole boot timeout to report a harness
+    # defect as a guest failure.
+    rm -f "$boot_img" "$grub_cfg" "$grub_cfg_new"
+    log "could not patch an ext4 grub.cfg in the overlay: no EFI/XBOOTLDR partition carried one"
+    log "  an emulated guest would time out its device units and land in emergency mode"
+    exit 1
+fi
+log "raised the guest's device-unit timeout to ${grub_cfg_timeout_sec}s in the overlay"
 
 key="$work_dir/$arch-id_ed25519"
 rm -f "$key" "$key.pub"
@@ -265,6 +412,10 @@ cleanup() {
         kill "$qemu_pid" 2>/dev/null || true
         wait "$qemu_pid" 2>/dev/null || true
     fi
+    # The grub.cfg patch's temporaries live here rather than in a trap of their
+    # own: a later `trap ... EXIT` replaces an earlier one, so a second trap
+    # would have leaked every one of these files.
+    rm -f "$boot_img" "$grub_cfg" "$grub_cfg_new"
     if [[ "$keep" -eq 0 ]]; then
         rm -rf "$seed_dir" "$seed" "$key" "$key.pub" "$work_dir/$arch-vars.fd"
     fi
@@ -272,13 +423,11 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 # --- Boot -------------------------------------------------------------------
-# An emulated guest gets a fixed share of the host's CPU, but the guest's own
-# systemd and udev run against wall-clock timeouts it cannot lengthen. On a
-# host that is already busy, an arch64 guest's udev coldplug can miss the
-# device-unit timeout and the guest lands in emergency mode — a failure of the
-# measurement, not of the image. This is measured rather than assumed: the
-# first boot here took 3 min 4 s of initrd coldplug under a load average of
-# 4.5, and systemd then timed out on /boot and /boot/efi.
+# The guest's device-unit timeout has already been raised in the overlay (see
+# above), so an emulated guest's coldplug can take its time without the boot
+# failing. The warning below is for the residual case: a host so loaded that the
+# guest gets almost no CPU at all, where even 600 s is not enough. Treat a
+# timeout there as inconclusive rather than as an artifact failure.
 host_cpus=$(nproc 2>/dev/null || echo 1)
 load_scaled=$(awk '{printf "%d", $1*100}' /proc/loadavg 2>/dev/null || echo 0)
 if [[ "$load_scaled" -ge "$((host_cpus * 75))" ]]; then
@@ -334,7 +483,13 @@ done
 log "ssh is up after $((SECONDS))s from boot start"
 
 log "waiting for cloud-init to finish"
-if ! timeout 600 guest 'sudo cloud-init status --wait'; then
+# The ssh invocation is repeated rather than wrapped as `timeout ... guest ...`:
+# `timeout` execs a program, `guest` is a shell function, and the first run to
+# reach this line died here with "failed to execute process" (exit 127) — every
+# earlier failure had stopped at the boot, so the line had never run. Same
+# budget as the SSH wait: cloud-init's own units are the slow part of an
+# emulated first boot, not the port opening.
+if ! timeout "$boot_timeout" ssh "${ssh_opts[@]}" ofi@127.0.0.1 'sudo cloud-init status --wait'; then
     log "cloud-init did not report success"
     exit 1
 fi
@@ -368,7 +523,7 @@ run_in_guest() {
 # own database read can stall behind an unresponsive guest; this is a report,
 # so a timeout here must not fail the run.
 run_in_guest "native dependency versions" \
-    'dpkg-query -W -f="${Package} ${Version}\n" libtsk19 libtsk-dev libewf2 libewf-dev libqt6core6t64 qt6-base-dev 2>/dev/null | sort' \
+    "dpkg-query -W -f='\${db:Status-Abbrev}|\${Package}|\${Version}\n' 'libtsk*' 'libewf*' libqt6core6t64 qt6-base-dev 2>/dev/null | awk -F'|' '\$1 ~ /^ii/ { print \$2, \$3 }' | sort" \
     || true
 
 # Assert once that the guest really is the architecture under test. A guest that
@@ -391,7 +546,11 @@ log "guest is $guest_arch, as requested"
 # `/boot` and `/boot/efi`, and a guest that missed them is in emergency mode
 # with a partially configured system. This is what the first boot here failed.
 log "asserting the guest's local filesystems are mounted"
-if ! guest 'findmnt --mountpoint /boot --mountpoint /boot/efi >/dev/null'; then
+# Two separate `findmnt` runs, not one with two `--mountpoint` options: findmnt
+# evaluates only the last one (util-linux 2.41.3), so `--mountpoint /boot
+# --mountpoint /boot/efi` checked /boot/efi alone and passed on exactly the
+# emergency-mode guest this assertion exists to catch.
+if ! guest 'findmnt --mountpoint /boot >/dev/null && findmnt --mountpoint /boot/efi >/dev/null'; then
     log "the guest did not mount /boot and /boot/efi"
     guest 'systemctl --failed --no-pager' 2>&1 | tee -a "$console_log" || true
     exit 1
@@ -462,9 +621,19 @@ case "$mode" in
             || { log "no artifact to install; pass --artifact or build one first"; exit 2; }
         log "installing $(basename "$artifact")"
         guest 'mkdir -p ~/artifact'
-        # `-p` preserves no mode here; the artifact is data, and the guest
-        # checks its own copy against the host digest below.
-        scp -q "${ssh_opts[@]}" "$artifact" ofi@127.0.0.1:~/artifact/ || { log "scp failed"; exit 1; }
+        # `-P`, not ssh's `-p`: the two tools spell the port differently, and
+        # scp reads a lowercase `-p` as "preserve times", so passing ssh_opts
+        # here made the port number a source file ("cannot stat '38320'") and
+        # the copy failed before it connected. Only the port and the identity
+        # differ between the two invocations; the rest of ssh_opts applies.
+        scp_opts=()
+        for opt in "${ssh_opts[@]}"; do
+            case "$opt" in
+                -p) scp_opts+=(-P) ;;
+                *) scp_opts+=("$opt") ;;
+            esac
+        done
+        scp -q "${scp_opts[@]}" "$artifact" ofi@127.0.0.1:~/artifact/ || { log "scp failed"; exit 1; }
         run_in_guest "install the package and self-test" \
             "sudo DEBIAN_FRONTEND=noninteractive apt-get install -y ./artifact/$(basename "$artifact") && openforensic-imager --self-test && openforensic-imager --dark --self-test" \
             && status=0 || status=$?
