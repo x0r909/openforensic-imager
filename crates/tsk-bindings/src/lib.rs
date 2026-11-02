@@ -200,7 +200,7 @@ pub struct TskError {
 
 impl TskError {
     fn last() -> Self {
-        let mut buffer = [0_i8; 1024];
+        let mut buffer = [0 as c_char; 1024];
         unsafe {
             ofi_tsk_last_error(buffer.as_mut_ptr(), buffer.len());
         }

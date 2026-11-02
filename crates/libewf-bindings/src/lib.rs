@@ -606,7 +606,7 @@ fn take_error(operation: &'static str, mut error: *mut LibewfError) -> EwfError 
     let message = if error.is_null() {
         "libewf operation failed".to_owned()
     } else {
-        let mut buffer = [0_i8; 4096];
+        let mut buffer = [0 as c_char; 4096];
         let count = unsafe { libewf_error_sprint(error, buffer.as_mut_ptr(), buffer.len()) };
         let message = if count > 0 {
             unsafe { CStr::from_ptr(buffer.as_ptr()) }
