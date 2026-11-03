@@ -15,6 +15,55 @@ use proptest::prelude::*;
 use std::os::unix::fs::DirBuilderExt;
 use tempfile::tempdir;
 
+/// The largest factor [`deadline_scale`] will accept.
+///
+/// A cap rather than none, so a mistyped factor cannot turn a finite deadline
+/// into one that outlasts the run. 100 is far above any measured emulation
+/// slowdown and is the same bound `worker_isolation.rs` uses, so the harness
+/// passes one factor that both suites accept.
+const MAX_DEADLINE_SCALE: u32 = 100;
+
+/// The factor by which this file's wall-clock deadlines are stretched.
+///
+/// Every deadline here is written for a host running the job natively: the
+/// polling loops below give a job 5 s or 10 s to reach a terminal status. A job
+/// submitted through the C ABI runs in the parser worker, and under whole-system
+/// emulation — `scripts/test-clean-vm.sh` boots arm64 through TCG — that worker
+/// is emulated too, so a job that takes a second here does not finish inside
+/// five there and the suite reads as broken rather than slow. Two tests
+/// (`ewf_acquisition_and_verification_run_through_the_parser_worker` and
+/// `directory_extraction_job_writes_reports`) failed in the arm64 guest at
+/// `abi.rs:617` for exactly this reason.
+///
+/// `OFI_TEST_DEADLINE_SCALE` lets the emulated run declare its factor instead of
+/// the suite guessing it. The default of 1 leaves a native run exactly as it was.
+///
+/// The deadline stays finite at every factor — the job still has to reach a
+/// terminal state, so a genuine hang still fails the test, after a longer and
+/// explicitly stated wait. A value that is not an integer, is zero, or exceeds
+/// [`MAX_DEADLINE_SCALE`] is ignored, so a typo leaves the native deadlines in
+/// place rather than removing the bound.
+fn deadline_scale() -> u32 {
+    let Ok(value) = std::env::var("OFI_TEST_DEADLINE_SCALE") else {
+        return 1;
+    };
+    match value.trim().parse::<u32>() {
+        Ok(scale) if (1..=MAX_DEADLINE_SCALE).contains(&scale) => scale,
+        _ => {
+            eprintln!(
+                "ignoring OFI_TEST_DEADLINE_SCALE={value:?}: expected an integer in \
+                 1..={MAX_DEADLINE_SCALE}"
+            );
+            1
+        }
+    }
+}
+
+/// A deadline written for native speed, stretched by [`deadline_scale`].
+fn scaled(deadline: Duration) -> Duration {
+    deadline * deadline_scale()
+}
+
 unsafe fn error_code(error: *mut ofi_error) -> String {
     assert!(!error.is_null());
     let code = unsafe { CStr::from_ptr(ofi_error_code(error)) };
@@ -388,7 +437,7 @@ unsafe fn submit_job(
 /// Polls until the job reaches a terminal status.
 unsafe fn wait_for_snapshot(manager: *mut ofi_job_manager, job_id: &str) -> serde_json::Value {
     let job_id = CString::new(job_id).unwrap();
-    let deadline = Instant::now() + Duration::from_secs(10);
+    let deadline = Instant::now() + scaled(Duration::from_secs(10));
     loop {
         let mut response = ptr::null_mut();
         let mut response_len = 0;
@@ -474,7 +523,7 @@ fn job_manager_runs_partition_analysis_through_the_c_abi() {
     let job_id = submitted["body"]["job_id"].as_str().unwrap().to_owned();
     let job_id_c = CString::new(job_id).unwrap();
 
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + scaled(Duration::from_secs(5));
     let snapshot = loop {
         let mut response = ptr::null_mut();
         let mut response_len = 0;
@@ -590,7 +639,7 @@ unsafe fn submit_request(manager: *mut ofi_job_manager, request: &serde_json::Va
 
 unsafe fn wait_for_job(manager: *mut ofi_job_manager, job_id: &str) -> serde_json::Value {
     let job_id = CString::new(job_id).unwrap();
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + scaled(Duration::from_secs(5));
     loop {
         let mut response = ptr::null_mut();
         let mut response_len = 0;

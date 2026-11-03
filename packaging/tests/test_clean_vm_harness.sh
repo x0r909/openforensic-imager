@@ -252,16 +252,33 @@ fi
 default_scale=$(grep -E '^deadline_scale=[0-9]+$' "$harness" | head -1 | cut -d= -f2)
 [[ -n "$default_scale" ]] || { printf 'deadline_scale has no numeric default\n' >&2; exit 1; }
 # The reader must accept the default, or every build run fails on a value the
-# harness chose. The upper bound lives in the test source, so it is read from
+# harness chose. The upper bound lives in the test sources, so it is read from
 # there rather than restated.
-reader=crates/native-bindings/tests/worker_isolation.rs
-max_scale=$(grep -E '^const MAX_DEADLINE_SCALE: u32 = [0-9]+;' "$reader" | sed -E 's/.*= ([0-9]+);/\1/')
-[[ -n "$max_scale" ]] || { printf 'MAX_DEADLINE_SCALE not found in %s\n' "$reader" >&2; exit 1; }
-if (( default_scale < 1 || default_scale > max_scale )); then
-    printf 'the harness default %s is outside the accepted range 1..=%s\n' \
-        "$default_scale" "$max_scale" >&2
+#
+# One factor is exported for the whole in-guest `cargo test --workspace`, so
+# *every* suite that reads it must accept it: a second reader added later with a
+# lower cap would ignore the factor for its own deadlines and fail the run for
+# the reason the knob exists to remove, while a check on one file stayed green.
+# The list is discovered rather than named, so a third reader is covered without
+# editing this test.
+readers=$(grep -rlF 'fn deadline_scale() -> u32 {' crates/native-bindings/tests/ || true)
+if [[ -z "$readers" ]]; then
+    printf 'no test reads OFI_TEST_DEADLINE_SCALE; this check is guarding nothing\n' >&2
     exit 1
 fi
+for reader in $readers; do
+    max_scale=$(grep -E '^const MAX_DEADLINE_SCALE: u32 = [0-9]+;' "$reader" \
+        | sed -E 's/.*= ([0-9]+);/\1/' || true)
+    if [[ -z "$max_scale" ]]; then
+        printf 'MAX_DEADLINE_SCALE not found in %s\n' "$reader" >&2
+        exit 1
+    fi
+    if (( default_scale < 1 || default_scale > max_scale )); then
+        printf 'the harness default %s is outside the range 1..=%s accepted by %s\n' \
+            "$default_scale" "$max_scale" "$reader" >&2
+        exit 1
+    fi
+done
 # The help text states the default; keep it honest.
 if ! grep -qF "Default $default_scale" <<<"$(sed -n '/--deadline-scale/,/--work-dir/p' "$harness")"; then
     printf -- '--deadline-scale help does not state its default %s\n' "$default_scale" >&2
