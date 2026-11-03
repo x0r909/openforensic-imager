@@ -225,7 +225,14 @@ if (( report_line < install_line )); then
 fi
 # `boot` mode never installs anything, so its report is the stock image's and
 # must still run — the two arms are the two places the function is called.
-if ! grep -qF 'if [[ "$mode" == boot ]]; then' "$harness"; then
+# Asserted on the branch *body*, not on its `if` line: the earlier version of
+# this check matched the header alone, so an arm that kept
+# `if [[ "$mode" == boot ]]; then` and lost the call it guards would have passed
+# while boot mode reported nothing. The window is the header through the first
+# `fi` that closes it, and the match requires a real call — leading whitespace,
+# then the bare name — so a commented-out line does not satisfy it either.
+boot_branch=$(sed -n '/^if \[\[ "\$mode" == boot \]\]; then$/,/^fi$/p' "$harness")
+if ! grep -qE '^[[:space:]]*report_native_dependencies[[:space:]]*$' <<<"$boot_branch"; then
     printf 'boot mode no longer reports the stock image dependencies\n' >&2
     exit 1
 fi
@@ -284,6 +291,37 @@ if ! grep -qF "Default $default_scale" <<<"$(sed -n '/--deadline-scale/,/--work-
     printf -- '--deadline-scale help does not state its default %s\n' "$default_scale" >&2
     exit 1
 fi
+
+# --- 4c. The guest self-test names a headless Qt platform ------------------
+#
+# The install gate runs `openforensic-imager --self-test` in a guest with no
+# display. `QApplication` is constructed before `--self-test` is parsed
+# (`apps/desktop/src/main.cpp:11` then `:33`), so with no platform named Qt
+# aborts on the missing xcb plugin — `rc=134` — before the option is ever read,
+# and the C5 Step 4 gate fails on the display rather than on the artifact. Arms
+# of this harness carried no platform and failed exactly that way. The repo's own
+# ctest entries set the same variable (`apps/desktop/CMakeLists.txt:166`), so the
+# requirement is the project's, not this harness's invention.
+#
+# Both arms are checked, and the check is on the invocation rather than the
+# file: `QT_QPA_PLATFORM` appearing somewhere in the script would be satisfied by
+# the build arm alone while the `install` arm stayed headless.
+for arm in "$build_branch" \
+           "$(sed -n '/^    install)$/,/^        ;;/p' "$harness")"; do
+    if ! grep -qF 'QT_QPA_PLATFORM=offscreen openforensic-imager --self-test' <<<"$arm"; then
+        printf 'a guest self-test runs without QT_QPA_PLATFORM=offscreen; in a headless guest Qt aborts before --self-test is parsed\n' >&2
+        exit 1
+    fi
+done
+# The dark run too: it is the same gate and it fails the same way, so a fix that
+# covered only the first invocation would still leave the arm failing.
+for arm in "$build_branch" \
+           "$(sed -n '/^    install)$/,/^        ;;/p' "$harness")"; do
+    if ! grep -qF 'QT_QPA_PLATFORM=offscreen openforensic-imager --dark --self-test' <<<"$arm"; then
+        printf 'the dark guest self-test runs without QT_QPA_PLATFORM=offscreen\n' >&2
+        exit 1
+    fi
+done
 
 # --- 5. cleanup() deletes the overlay unless --keep ------------------------
 #

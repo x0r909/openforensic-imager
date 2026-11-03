@@ -640,7 +640,7 @@ case "$mode" in
         # than being overwritten by it, so the whole arm is gated on it.
         if [[ "$status" -eq 0 ]]; then
             run_in_guest "install build dependencies" \
-                'sudo apt-get update && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates build-essential cmake ninja-build pkg-config curl git file libtsk-dev libewf-dev qt6-base-dev qt6-declarative-dev qt6-svg-dev e2fsprogs ewf-tools mtools dosfstools ntfs-3g exfatprogs strace util-linux gdisk fdisk imagemagick desktop-file-utils' \
+                'sudo apt-get update && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates build-essential cmake ninja-build pkg-config curl git file libtsk-dev libewf-dev qt6-base-dev qt6-declarative-dev qt6-svg-dev e2fsprogs ewf-tools mtools dosfstools ntfs-3g exfatprogs strace util-linux gdisk fdisk imagemagick desktop-file-utils librsvg2-bin' \
                 && status=0 || status=$?
             # Now that the libraries the artifacts link against are installed,
             # this reports the dependency set that matters rather than the stock
@@ -728,9 +728,18 @@ case "$mode" in
         # exists. Done here because this is the only place the artifact and the
         # clean system coexist. `./` matters: without it apt reads the argument
         # as a package name rather than a path to a .deb.
+        #
+        # `QT_QPA_PLATFORM=offscreen` is not optional here. The guest is
+        # headless, and `QApplication` is constructed before `--self-test` is
+        # parsed (`apps/desktop/src/main.cpp:11` then `:33`), so with no platform
+        # set Qt aborts on the missing xcb plugin before the option is read. The
+        # repo's own ctest entries carry the same variable
+        # (`apps/desktop/CMakeLists.txt:166`), which is where this convention
+        # comes from; this arm had dropped it, so the gate failed on the display
+        # rather than on the artifact.
         if [[ "$status" -eq 0 ]]; then
             run_in_guest "install the built package and self-test" \
-                'cd ~/openforensic-imager && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y ./packaging/output/*.deb && openforensic-imager --self-test && openforensic-imager --dark --self-test' \
+                'cd ~/openforensic-imager && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y ./packaging/output/*.deb && QT_QPA_PLATFORM=offscreen openforensic-imager --self-test && QT_QPA_PLATFORM=offscreen openforensic-imager --dark --self-test' \
                 && status=0 || status=$?
         fi
         ;;
@@ -743,8 +752,13 @@ case "$mode" in
         log "installing $(basename "$artifact")"
         guest 'mkdir -p ~/artifact'
         scp -q "${scp_opts[@]}" "$artifact" ofi@127.0.0.1:~/artifact/ || { log "scp failed"; exit 1; }
+        # Same headless requirement as the build arm above: the guest has no
+        # display, and `QApplication` is built before `--self-test` is parsed,
+        # so the platform has to be named or Qt aborts on the missing xcb plugin
+        # before the option is read. This is the convention the repo's own ctest
+        # entries use (`apps/desktop/CMakeLists.txt:166`).
         run_in_guest "install the package and self-test" \
-            "sudo DEBIAN_FRONTEND=noninteractive apt-get install -y ./artifact/$(basename "$artifact") && openforensic-imager --self-test && openforensic-imager --dark --self-test" \
+            "sudo DEBIAN_FRONTEND=noninteractive apt-get install -y ./artifact/$(basename "$artifact") && QT_QPA_PLATFORM=offscreen openforensic-imager --self-test && QT_QPA_PLATFORM=offscreen openforensic-imager --dark --self-test" \
             && status=0 || status=$?
         ;;
 esac
