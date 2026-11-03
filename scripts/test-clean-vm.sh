@@ -68,6 +68,12 @@ Usage: test-clean-vm.sh [options]
   --boot-timeout <n>     Seconds to wait for SSH. Default 600.
   --work-timeout <n>     Seconds to let the in-guest work run; 0 disables.
                          Default 0.
+  --deadline-scale <n>   Factor by which the workspace tests' wall-clock
+                         deadlines are stretched, passed to the guest as
+                         OFI_TEST_DEADLINE_SCALE. Default 10, measured: the
+                         guest hashes a 70 MiB image about 9x slower than the
+                         build host. Set 1 to run the tests' native deadlines
+                         unchanged.
   --work-dir <path>      Where images, overlays, and logs go. Default
                          packaging/build/clean-vm.
   --keep                 Keep the overlay, seed, and keys for inspection.
@@ -88,6 +94,12 @@ memory_mb=4096
 cpus=4
 boot_timeout=600
 work_timeout=0
+# An emulated guest hashes a 70 MiB image about 9x slower than the build host
+# (measured; see --deadline-scale), and the workspace tests time their jobs on
+# the wall clock. Without this factor the guest's `cargo test --workspace`
+# fails on slow hosts for jobs that would pass natively — a slow host reading
+# as broken code. 10 is the measurement rounded up.
+deadline_scale=10
 work_dir=
 keep=0
 
@@ -103,6 +115,7 @@ while [[ $# -gt 0 ]]; do
         --cpus) cpus=${2:?--cpus needs a value}; shift 2 ;;
         --boot-timeout) boot_timeout=${2:?--boot-timeout needs a value}; shift 2 ;;
         --work-timeout) work_timeout=${2:?--work-timeout needs a value}; shift 2 ;;
+        --deadline-scale) deadline_scale=${2:?--deadline-scale needs a value}; shift 2 ;;
         --work-dir) work_dir=${2:?--work-dir needs a path}; shift 2 ;;
         --keep) keep=1; shift ;;
         --help|-h) usage; exit 0 ;;
@@ -118,7 +131,7 @@ case "$mode" in
     boot|build|install) ;;
     *) printf '--mode must be boot, build, or install, got %s\n' "$mode" >&2; exit 2 ;;
 esac
-for value in "$disk_gb" "$memory_mb" "$cpus" "$boot_timeout" "$work_timeout"; do
+for value in "$disk_gb" "$memory_mb" "$cpus" "$boot_timeout" "$work_timeout" "$deadline_scale"; do
     [[ "$value" =~ ^[0-9]+$ ]] || { printf 'numeric option expected, got %s\n' "$value" >&2; exit 2; }
 done
 
@@ -537,14 +550,27 @@ run_in_guest() {
     return "$status"
 }
 
-# The native libraries the base image provides, and their versions: this is the
-# arm64 answer to "which TSK and libewf does the distribution ship", which the
+# The native libraries the guest provides, and their versions: this is the arm64
+# answer to "which TSK and libewf does the distribution ship", which the
 # distribution matrix records for the other four. It is bounded because dpkg's
 # own database read can stall behind an unresponsive guest; this is a report,
 # so a timeout here must not fail the run.
-run_in_guest "native dependency versions" \
-    "dpkg-query -W -f='\${db:Status-Abbrev}|\${Package}|\${Version}\n' 'libtsk*' 'libewf*' libqt6core6t64 qt6-base-dev 2>/dev/null | awk -F'|' '\$1 ~ /^ii/ { print \$2, \$3 }' | sort" \
-    || true
+#
+# It is a function because *when* it runs decides what it reports. In `boot`
+# mode the stock image is the answer, so it runs before the mode dispatch. In
+# `build` mode the artifacts link against the libraries the build arm installs,
+# so reporting before that install would describe a guest that ships none of
+# them and print no rows — the question asked before the answer exists. The
+# build arm therefore calls it again after installing.
+report_native_dependencies() {
+    run_in_guest "native dependency versions" \
+        "dpkg-query -W -f='\${db:Status-Abbrev}|\${Package}|\${Version}\n' 'libtsk*' 'libewf*' libqt6core6t64 qt6-base-dev 2>/dev/null | awk -F'|' '\$1 ~ /^ii/ { print \$2, \$3 }' | sort" \
+        || true
+}
+
+if [[ "$mode" == boot ]]; then
+    report_native_dependencies
+fi
 
 # Assert once that the guest really is the architecture under test. A guest that
 # came up as the host's architecture would make every later result meaningless,
@@ -601,11 +627,26 @@ case "$mode" in
         # off this host. An allow-list is used instead of more --exclude lines
         # because a deny-list misses the next large directory someone creates,
         # and what the guest build needs is exactly the tracked tree.
+        # Guarded rather than left as a bare pipeline. Under `set -o pipefail`
+        # either side failing aborts the script, which skips the `clean-vm …
+        # FAILED` verdict line at the bottom and leaves a non-zero exit whose
+        # only explanation is the absence of a log line. Catching the status
+        # here turns a failed copy into the same verdict every other step
+        # produces.
         git -C "$repo_root" ls-files -z | tar -C "$repo_root" -cf - --null -T - \
-            | guest 'mkdir -p ~/openforensic-imager && tar -C ~/openforensic-imager -xf -'
-        run_in_guest "install build dependencies" \
-            'sudo apt-get update && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates build-essential cmake ninja-build pkg-config curl git file libtsk-dev libewf-dev qt6-base-dev qt6-declarative-dev qt6-svg-dev e2fsprogs ewf-tools mtools dosfstools ntfs-3g exfatprogs strace util-linux gdisk fdisk imagemagick desktop-file-utils' \
+            | guest 'mkdir -p ~/openforensic-imager && tar -C ~/openforensic-imager -xf -' \
             && status=0 || status=$?
+        # `$status` from a failed copy must stop the install step below rather
+        # than being overwritten by it, so the whole arm is gated on it.
+        if [[ "$status" -eq 0 ]]; then
+            run_in_guest "install build dependencies" \
+                'sudo apt-get update && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates build-essential cmake ninja-build pkg-config curl git file libtsk-dev libewf-dev qt6-base-dev qt6-declarative-dev qt6-svg-dev e2fsprogs ewf-tools mtools dosfstools ntfs-3g exfatprogs strace util-linux gdisk fdisk imagemagick desktop-file-utils' \
+                && status=0 || status=$?
+            # Now that the libraries the artifacts link against are installed,
+            # this reports the dependency set that matters rather than the stock
+            # image's, which ships none of them.
+            report_native_dependencies
+        fi
         if [[ "$status" -eq 0 ]]; then
             # The Ubuntu cloud image ships no Rust, and the workspace pins a
             # toolchain in rust-toolchain.toml, so rustup is the way to get the
@@ -623,7 +664,7 @@ case "$mode" in
         cargo_path='export PATH=$HOME/.cargo/bin:$PATH'
         if [[ "$status" -eq 0 ]]; then
             run_in_guest "cargo test --workspace" \
-                "cd ~/openforensic-imager && $cargo_path && mkdir -p packaging/build && cargo test --workspace >packaging/build/vm-workspace.log 2>&1; s=\$?; tail -n 20 packaging/build/vm-workspace.log; exit \$s" \
+                "cd ~/openforensic-imager && $cargo_path && export OFI_TEST_DEADLINE_SCALE=$deadline_scale && mkdir -p packaging/build && cargo test --workspace >packaging/build/vm-workspace.log 2>&1; s=\$?; tail -n 20 packaging/build/vm-workspace.log; exit \$s" \
                 && status=0 || status=$?
         fi
         if [[ "$status" -eq 0 ]]; then
@@ -637,8 +678,13 @@ case "$mode" in
                 && status=0 || status=$?
         fi
         if [[ "$status" -eq 0 ]]; then
+            # Guarded like its neighbours: without the `|| status=$?`, a failed
+            # `sha256sum` here would abort the script under `set -euo pipefail`
+            # with a non-zero exit but no `clean-vm … FAILED` verdict line, so
+            # the run would read as a crash rather than as a failed check.
             run_in_guest "artifact digests" \
-                'cd ~/openforensic-imager && sha256sum packaging/output/*'
+                'cd ~/openforensic-imager && sha256sum packaging/output/*' \
+                && status=0 || status=$?
         fi
         # The artifacts exist only in the guest, and the guest is disposable: a
         # digest printed into a log is not an artifact, so a run that stopped

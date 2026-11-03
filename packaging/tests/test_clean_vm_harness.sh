@@ -153,6 +153,121 @@ if ! grep -qF 'copy_dir="$work_dir/$arch-artifacts"' <<<"$build_branch"; then
     exit 1
 fi
 
+# --- 4a. A failed step produces a verdict, not a silent abort --------------
+#
+# The script runs under `set -euo pipefail`, so a bare command that fails aborts
+# it before the `clean-vm … FAILED` line at the bottom of the run: the run exits
+# non-zero with no statement of which step failed, which reads as a crash rather
+# than as a failed check. Every step in the build arm must therefore capture its
+# status (`&& status=0 || status=$?_`) and gate the steps after it. Asserted as
+# text for the same reason as the checks above: reachable only inside a guest.
+if ! grep -qF 'git -C "$repo_root" ls-files -z | tar' <<<"$build_branch"; then
+    printf 'the build arm no longer copies the workspace in\n' >&2
+    exit 1
+fi
+# The copy is the one step written as a pipeline rather than a run_in_guest
+# call, and it is also the step a failed transfer surfaces on first, so it is
+# checked on its own rather than by the loop below.
+if ! grep -A2 -F 'git -C "$repo_root" ls-files -z | tar' <<<"$build_branch" | grep -qF 'status=$?'; then
+    printf 'the workspace copy does not capture its exit status\n' >&2
+    exit 1
+fi
+# Any run_in_guest call in this arm without a status capture would abort the
+# script. Each call is a `run_in_guest "name" \` line followed by its arguments
+# and the `&& status=0 || status=$?` on its last line, so each call is one block:
+# from its own line up to the next call. Checked per block rather than by
+# counting occurrences, because a capture belonging to a neighbouring step is
+# only a few lines away and counting would let a missing one hide behind the next
+# step's. `grep -A4` is not used for the same reason: overlapping context merges
+# adjacent blocks. awk over the whole arm delimits them exactly.
+call_count=$(grep -c 'run_in_guest "' <<<"$build_branch" || true)
+if [[ "${call_count:-0}" -eq 0 ]]; then
+    printf 'the build arm makes no guest calls; this check is guarding nothing\n' >&2
+    exit 1
+fi
+unguarded=$(awk '
+    /run_in_guest "/ { if (n && !hit) print prev; prev = $0; hit = 0; n++; next }
+    /status=\$\?/    { hit = 1 }
+    END              { if (n && !hit) print prev }' <<<"$build_branch")
+if [[ -n "$unguarded" ]]; then
+    printf 'guest steps run without capturing their status:\n%s\n' "$unguarded" >&2
+    exit 1
+fi
+# The digest step specifically: it reports the artifacts, and a failure there
+# must stop the copy-out that follows rather than abort between them. Checked as
+# a window from the step's own name, because `&& status=0 || status=$?` also ends
+# the three guest steps listed above it, so a plain search finds a neighbour's.
+# The window ends at the first `fi` that closes the call.
+digest_block=$(grep -A6 -F '"artifact digests"' <<<"$build_branch" | sed -n '1,/^[[:space:]]*fi$/p')
+if ! grep -qF 'status=$?' <<<"$digest_block"; then
+    printf 'the artifact-digest step does not capture its status\n' >&2
+    exit 1
+fi
+# The dependency report describes the guest as it stands, so in the build arm it
+# has to run after the install that puts the libraries there — before that
+# install it reports the stock image, which ships none of the libraries the
+# artifacts link against and so prints nothing.
+if ! grep -qF 'report_native_dependencies()' "$harness"; then
+    printf 'the native-dependency report is not a function that can be re-run\n' >&2
+    exit 1
+fi
+# `|| true` on both: with no match, `grep` exits 1 and `pipefail` would abort the
+# script here, so the check below could never report what is actually wrong.
+install_line=$(grep -n 'install build dependencies' <<<"$build_branch" | head -1 | cut -d: -f1 || true)
+report_line=$(grep -n 'report_native_dependencies' <<<"$build_branch" | head -1 | cut -d: -f1 || true)
+if [[ -z "$install_line" || -z "$report_line" ]]; then
+    printf 'the build arm does not install dependencies and report them\n' >&2
+    exit 1
+fi
+if (( report_line < install_line )); then
+    printf 'the build arm reports dependencies before installing them\n' >&2
+    exit 1
+fi
+# `boot` mode never installs anything, so its report is the stock image's and
+# must still run — the two arms are the two places the function is called.
+if ! grep -qF 'if [[ "$mode" == boot ]]; then' "$harness"; then
+    printf 'boot mode no longer reports the stock image dependencies\n' >&2
+    exit 1
+fi
+
+# --- 4b. The deadline scale reaches the guest's test run -------------------
+#
+# The workspace tests time jobs on the wall clock, and the guest hashes about 9x
+# slower than the build host, so without a factor the in-guest
+# `cargo test --workspace` fails on the slowest jobs for a reason that has
+# nothing to do with the code. Asserted on the script because the effect is only
+# observable inside a guest; the default is checked against the value the option
+# documents, so a default that drifts from its own help text fails here.
+
+if ! grep -qF -- '--deadline-scale <n>' "$harness"; then
+    printf 'the harness does not document --deadline-scale\n' >&2
+    exit 1
+fi
+if ! grep -qF 'OFI_TEST_DEADLINE_SCALE=$deadline_scale' <<<"$build_branch"; then
+    printf 'the build branch does not pass the deadline scale into the guest\n' >&2
+    exit 1
+fi
+# A non-numeric value would abort the run at the numeric-option validator, so
+# the default has to be a number.
+default_scale=$(grep -E '^deadline_scale=[0-9]+$' "$harness" | head -1 | cut -d= -f2)
+[[ -n "$default_scale" ]] || { printf 'deadline_scale has no numeric default\n' >&2; exit 1; }
+# The reader must accept the default, or every build run fails on a value the
+# harness chose. The upper bound lives in the test source, so it is read from
+# there rather than restated.
+reader=crates/native-bindings/tests/worker_isolation.rs
+max_scale=$(grep -E '^const MAX_DEADLINE_SCALE: u32 = [0-9]+;' "$reader" | sed -E 's/.*= ([0-9]+);/\1/')
+[[ -n "$max_scale" ]] || { printf 'MAX_DEADLINE_SCALE not found in %s\n' "$reader" >&2; exit 1; }
+if (( default_scale < 1 || default_scale > max_scale )); then
+    printf 'the harness default %s is outside the accepted range 1..=%s\n' \
+        "$default_scale" "$max_scale" >&2
+    exit 1
+fi
+# The help text states the default; keep it honest.
+if ! grep -qF "Default $default_scale" <<<"$(sed -n '/--deadline-scale/,/--work-dir/p' "$harness")"; then
+    printf -- '--deadline-scale help does not state its default %s\n' "$default_scale" >&2
+    exit 1
+fi
+
 # --- 5. cleanup() deletes the overlay unless --keep ------------------------
 #
 # The overlay is the one artefact of a run that costs tens of GiB, and the
