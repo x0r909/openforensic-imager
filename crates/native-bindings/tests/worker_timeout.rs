@@ -9,6 +9,58 @@ use native_bindings::{
 };
 use tempfile::tempdir;
 
+/// Restores the process-global `OFI_*` variables this test sets, when it ends.
+///
+/// Mirrors the guard in `worker_isolation.rs`. The worker reads its spawn
+/// configuration from the test process's environment, and those variables are
+/// global to the binary, so leaving `OFI_WORKER_TIMEOUT_SECS=1` behind would
+/// hand a one-second budget to whatever runs next. Restoring the previous value
+/// rather than removing the key also preserves an operator's own setting.
+///
+/// No lock here, unlike the sibling file: this binary holds a single test, so
+/// there is no second thread to race. The lock in `worker_cancellation.rs` is
+/// there because that binary's two tests mutate the same variables.
+struct EnvironmentGuard {
+    saved: Vec<(&'static str, Option<std::ffi::OsString>)>,
+}
+
+impl EnvironmentGuard {
+    fn new() -> Self {
+        Self { saved: Vec::new() }
+    }
+
+    /// Sets a variable, remembering the value it replaced.
+    ///
+    /// The previous value is read here, immediately before the write, so there
+    /// is no way to call this in the wrong order and save the value just set.
+    ///
+    /// # Safety
+    ///
+    /// Mutating the process environment is unsound while other threads read it.
+    /// This call site is the only mutation in this binary.
+    unsafe fn set(&mut self, key: &'static str, value: impl AsRef<std::ffi::OsStr>) {
+        if !self.saved.iter().any(|(saved, _)| *saved == key) {
+            self.saved.push((key, std::env::var_os(key)));
+        }
+        unsafe { std::env::set_var(key, value) };
+    }
+}
+
+impl Drop for EnvironmentGuard {
+    fn drop(&mut self) {
+        for (key, value) in &self.saved {
+            // SAFETY: this binary has one test, so no other thread is reading
+            // the environment while the guard restores it.
+            unsafe {
+                match value {
+                    Some(value) => std::env::set_var(key, value),
+                    None => std::env::remove_var(key),
+                }
+            }
+        }
+    }
+}
+
 #[test]
 fn a_stalled_worker_is_terminated_at_the_deadline() {
     let directory = tempdir().unwrap();
@@ -19,9 +71,12 @@ fn a_stalled_worker_is_terminated_at_the_deadline() {
     let mut permissions = std::fs::metadata(&worker).unwrap().permissions();
     permissions.set_mode(0o755);
     std::fs::set_permissions(&worker, permissions).unwrap();
+    // Held for the rest of the test, so the timeout budget is in force when the
+    // manager spawns the worker and is undone before anything else reads it.
+    let mut environment = EnvironmentGuard::new();
     unsafe {
-        std::env::set_var("OFI_PARSER_WORKER", worker);
-        std::env::set_var("OFI_WORKER_TIMEOUT_SECS", "1");
+        environment.set("OFI_PARSER_WORKER", worker);
+        environment.set("OFI_WORKER_TIMEOUT_SECS", "1");
     }
 
     let mut manager: *mut ofi_job_manager = ptr::null_mut();
