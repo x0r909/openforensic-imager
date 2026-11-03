@@ -99,6 +99,18 @@ const BPF_RET: u16 = 0x06;
 /// - Closed by omission: the socket family, `ptrace`, `process_vm_readv`,
 ///   `process_vm_writev`, `kill`, `ioctl`, and every `*at` variant that would
 ///   escape the Landlock root.
+// The set of operations below is identical on every architecture; only the
+// syscall that expresses it differs. aarch64 uses the generic syscall ABI
+// (asm-generic/unistd.h), which never defined the legacy x86 spellings
+// `access`, `mkdir`, `poll`, `readlink`, `rename`, or `rmdir` — each was
+// folded into its `*at` variant, so those names do not exist in `libc` for
+// that target at all. `arch_prctl` is x86 thread-local-storage setup and has
+// no arm64 counterpart. Selecting the name per target keeps the permitted
+// set the same instead of silently widening or narrowing the sandbox: the
+// `*at` variants that remain in the common section (`openat`, `newfstatat`,
+// `statx`, `mkdirat`, `unlinkat`) already cover the missing spellings'
+// operations, and the four added below are the exact counterparts of
+// `access`, `readlink`, `poll`, and `rename`.
 const ALLOWED_SYSCALLS: &[libc::c_long] = &[
     // Process lifecycle. `exit` is the single-thread path; denying it makes
     // glibc retry it in a spin loop instead of terminating.
@@ -121,16 +133,30 @@ const ALLOWED_SYSCALLS: &[libc::c_long] = &[
     libc::SYS_fstat,
     libc::SYS_newfstatat,
     libc::SYS_statx,
+    #[cfg(target_arch = "x86_64")]
     libc::SYS_access,
+    #[cfg(target_arch = "aarch64")]
+    libc::SYS_faccessat,
+    #[cfg(target_arch = "x86_64")]
     libc::SYS_readlink,
+    #[cfg(target_arch = "aarch64")]
+    libc::SYS_readlinkat,
     libc::SYS_getdents64,
+    #[cfg(target_arch = "x86_64")]
     libc::SYS_poll,
+    #[cfg(target_arch = "aarch64")]
+    libc::SYS_ppoll,
     // File creation, rename, and cleanup.
     libc::SYS_write,
     libc::SYS_fsync,
+    #[cfg(target_arch = "x86_64")]
     libc::SYS_mkdir,
     libc::SYS_mkdirat,
+    #[cfg(target_arch = "x86_64")]
     libc::SYS_rename,
+    #[cfg(target_arch = "aarch64")]
+    libc::SYS_renameat,
+    #[cfg(target_arch = "x86_64")]
     libc::SYS_rmdir,
     libc::SYS_unlinkat,
     // Signalling.
@@ -149,6 +175,7 @@ const ALLOWED_SYSCALLS: &[libc::c_long] = &[
     libc::SYS_landlock_add_rule,
     libc::SYS_landlock_restrict_self,
     // Runtime bookkeeping.
+    #[cfg(target_arch = "x86_64")]
     libc::SYS_arch_prctl,
     libc::SYS_rseq,
     libc::SYS_set_robust_list,
@@ -525,6 +552,70 @@ mod seccomp_architecture_tests {
         assert_eq!(
             program[3].k, 0,
             "the syscall number load must follow the architecture guard"
+        );
+    }
+
+    /// The defect this test exists for: the allow-list named six syscalls that
+    /// the generic ABI never defined (`access`, `mkdir`, `poll`, `readlink`,
+    /// `rename`, `rmdir`) plus x86-only `arch_prctl`, so the crate did not
+    /// compile for aarch64 at all. The names could not simply be dropped: on
+    /// x86_64 they are the ones glibc issues, and on aarch64 the `*at` forms
+    /// are. This asserts that each architecture gets exactly its own spelling
+    /// and never the other's, so the permit set stays the same operation set
+    /// rather than silently losing a capability the worker needs or gaining
+    /// one the x86_64 list never granted.
+    #[test]
+    fn the_allow_list_names_syscalls_its_architecture_actually_has() {
+        // Present only on x86_64: the legacy forms and the x86 TLS setup call.
+        // If any of these appears in an aarch64 build it is either a `cfg` that
+        // was dropped or a name that only exists to make the crate compile,
+        // and in both cases the filter is not the one x86_64 was reviewed with.
+        #[cfg(target_arch = "x86_64")]
+        for legacy in [
+            libc::SYS_access,
+            libc::SYS_readlink,
+            libc::SYS_poll,
+            libc::SYS_rename,
+            libc::SYS_mkdir,
+            libc::SYS_rmdir,
+            libc::SYS_arch_prctl,
+        ] {
+            assert!(
+                ALLOWED_SYSCALLS.contains(&legacy),
+                "the x86_64 allow-list lost {legacy}: dropping a syscall glibc \
+                 issues would turn a working call into EPERM inside the worker"
+            );
+        }
+
+        // The operations those legacy forms perform, spelled the way the
+        // generic ABI spells them. Each is required on aarch64 because the
+        // legacy name does not exist there at all.
+        #[cfg(target_arch = "aarch64")]
+        for at_form in [
+            libc::SYS_faccessat,
+            libc::SYS_readlinkat,
+            libc::SYS_ppoll,
+            libc::SYS_renameat,
+        ] {
+            assert!(
+                ALLOWED_SYSCALLS.contains(&at_form),
+                "the aarch64 allow-list is missing {at_form}: the operation is \
+                 permitted on x86_64, so without it the same work fails with \
+                 EPERM on arm64 and the sandbox is not arch-equivalent"
+            );
+        }
+
+        // Every form must be a distinct entry: a duplicate would silently
+        // spend a BPF slot without permitting anything new.
+        let mut seen = ALLOWED_SYSCALLS.to_vec();
+        seen.sort_unstable();
+        let before = seen.len();
+        seen.dedup();
+        assert_eq!(
+            seen.len(),
+            before,
+            "the allow-list contains a duplicate syscall number, so the filter \
+             spends a slot on nothing and the intent is unclear"
         );
     }
 }
