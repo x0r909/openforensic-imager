@@ -181,7 +181,11 @@ defects are resolved.
 - Cancellation kills the worker process group, leaving an orphan staging
   directory that no reaper surfaces *at the time of this review*. Phase 9 added
   a `.ofi-staging.json` marker and `acquisition::reap_stale_staging`, so an
-  orphan is now reaped once its process is gone and it is older than 24 h.
+  orphan is now reaped once its process is gone and it is older than 24 h. That
+  reaper's first liveness probe used `kill`, which the worker's own seccomp
+  filter refuses with `EPERM` — indistinguishable from a live process — so it
+  removed nothing until Phase 9 replaced the probe with `getpgid`; see the
+  correction under residual risk 5 in [phase8-review.md](phase8-review.md).
 
 ## Gate decision
 

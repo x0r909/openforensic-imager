@@ -137,6 +137,20 @@ is parsed. There is no silent reduced-assurance path.
    `staging_reaped`. The residual limitation is that a job cancelled inside the
    24 h window still occupies its retained bytes until the age passes — that
    window is what makes ACQ-011 retention meaningful.
+   **Correction (Phase 9).** The liveness half of that control did not work
+   when this review was written, and this review described the code's intent
+   rather than its behaviour. The probe was `kill(pid, 0)`, which the worker's
+   own default-deny filter refuses; the refusal is `EPERM`, which the probe read
+   as "exists but belongs to another user". Every orphan therefore read as
+   alive, and outside the unit tests — which inject their own liveness closure
+   and so never exercise the production probe — nothing was ever reaped but
+   unmarked directories. The probe is now `getpgid`, a pure query carried by the
+   allow-list that answers `ESRCH` for a pid no process holds, and
+   `worker_isolation::a_staging_orphan_naming_a_dead_pid_is_reaped_inside_the_worker`
+   runs the real probe through the confined worker, with an old orphan naming a
+   live pid as the control it must keep. The allow-list in `worker-sandbox` grew
+   by `getpid` and `getpgid` for this; both are side-effect-free identity
+   queries, and neither can signal another process.
 6. **Worker identity is fixable only in debug builds.** `OFI_PARSER_WORKER` is
    honoured only under `cfg!(debug_assertions)`; a release build always uses the
    beside-application binary. The environment is still cleared before spawn.

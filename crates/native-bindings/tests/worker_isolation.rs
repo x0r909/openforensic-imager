@@ -717,6 +717,131 @@ fn a_source_smaller_than_the_file_size_floor_is_still_acquired() {
     );
 }
 
+/// The staging reaper must see a dead pid as dead *inside the worker*.
+///
+/// `acquire_reader` removes orphaned staging directories before it writes
+/// anything, so a cancel/retry loop does not fill the destination volume. It
+/// decides liveness with `acquisition::pid_is_alive`, and that function runs
+/// inside `ofi-parser-worker`, under the default-deny seccomp filter in
+/// `worker-sandbox`. A liveness probe that asks the kernel with a syscall the
+/// filter refuses does not fail loudly — it receives the filter's `EPERM`,
+/// which is exactly what a live-but-foreign process returns, so every marked
+/// orphan reads as alive and the reaper removes nothing.
+///
+/// Every unit test of `reap_stale_staging` injects its own liveness closure, so
+/// the production probe is exercised by none of them. This test is the only one
+/// that runs the real `pid_is_alive` down the real path: it submits the
+/// acquisition through the job manager, which spawns and confines the worker,
+/// and the orphan it leaves behind names a pid that has certainly exited.
+///
+/// That pid is what produced a marker beside it would have recorded from the
+/// last pid slot, and is asserted dead from here — outside the worker — before
+/// the job runs. A reaped count of zero is the regression: it means the worker
+/// could not tell a dead pid from a live one.
+#[test]
+fn a_staging_orphan_naming_a_dead_pid_is_reaped_inside_the_worker() {
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|error| error.into_inner());
+    let mut environment = EnvironmentGuard::new();
+    // A 16 KiB acquisition is seconds of work. This test is about the reaper,
+    // not the clock; it still declares its budget rather than inheriting one.
+    unsafe { environment.set("OFI_WORKER_TIMEOUT_SECS", scaled_budget(60)) };
+
+    let directory = tempdir().unwrap();
+    let source = directory.path().join("source.raw");
+    std::fs::write(&source, vec![0x41_u8; 16 * 1024]).unwrap();
+
+    let destination = directory.path().join("destination");
+    std::fs::create_dir(&destination).unwrap();
+
+    // A pid no process holds. The kernel's last pid slot is the same value that
+    // `std::process::id()` returns when `getpid` is refused — which is what a
+    // confined `write_marker` recorded before this test existed — so it stands
+    // in for both "the owner is gone" and "the marker is garbage".
+    let dead_pid = std::fs::read_to_string("/proc/sys/kernel/pid_max")
+        .ok()
+        .and_then(|text| text.trim().parse::<u32>().ok())
+        .map(|max| max.wrapping_sub(1))
+        .unwrap_or(u32::MAX);
+    // Stated as a precondition, not assumed: `pid_is_alive` is the function under
+    // test and cannot be the witness for its own fixture. From out here, where
+    // no filter is installed, the pid must read as dead for the assertion below
+    // to mean anything.
+    assert!(
+        !acquisition::pid_is_alive(dead_pid),
+        "pid {dead_pid} is live on this host, so it cannot stand in for an orphan"
+    );
+
+    // Two orphans, both older than the 24 h retention window, differing only in
+    // the pid their marker names. The pair is what makes the assertion mean
+    // something: an unreadable marker also falls back to the age check and is
+    // reaped, so a lone dead-pid orphan would pass even if the marker were
+    // never read at all. The live-pid orphan is the control — it must survive,
+    // and it can only survive if the marker was read and the pid judged alive.
+    let aged = std::time::SystemTime::now() - Duration::from_secs(48 * 60 * 60);
+    let make_orphan = |base: &str, pid: u32| {
+        let path = destination.join(format!(".{base}.partial-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir(&path).unwrap();
+        std::fs::write(
+            path.join(acquisition::STAGING_MARKER_FILE),
+            format!(r#"{{"job_id":"job-{base}","pid":{pid},"started_at_unix_ms":0}}"#),
+        )
+        .unwrap();
+        let file = std::fs::File::open(&path).unwrap();
+        file.set_times(std::fs::FileTimes::new().set_modified(aged))
+            .unwrap();
+        drop(file);
+        path
+    };
+    let dead_orphan = make_orphan("prior", dead_pid);
+    // This test process is alive for the whole run, and the worker is its child
+    // in the same process group, so the confined probe can see it.
+    let live_orphan = make_orphan("running", std::process::id());
+
+    let request = serde_json::json!({
+        "operation": "acquisition",
+        "source_path": source,
+        "destination_dir": destination,
+        "base_name": "reaping",
+        "format": "raw",
+        "options": {
+            "block_size": 4096,
+            "maximum_segment_size": 1048576,
+            "compression": "none",
+            "verify_after": false
+        }
+    });
+
+    let mut manager: *mut ofi_job_manager = ptr::null_mut();
+    let mut error = ptr::null_mut();
+    assert_eq!(
+        unsafe { ofi_job_manager_new(1, &mut manager, &mut error) },
+        ofi_status::OFI_STATUS_OK
+    );
+    let job_id = unsafe { submit(manager, &request) }.unwrap();
+    let snapshot = wait_for_job_within(manager, &job_id, Duration::from_secs(60));
+    unsafe { ofi_job_manager_free(manager) };
+
+    assert_ne!(
+        snapshot["body"]["status"], "failed",
+        "the acquisition itself must still run: {snapshot}"
+    );
+    assert_eq!(
+        snapshot["body"]["result"]["manifest"]["staging_reaped"], 1,
+        "the worker could not tell a dead pid from a live one, so the orphaned \
+         staging directory was kept and the destination grows on every retry: \
+         {snapshot}"
+    );
+    assert!(
+        !dead_orphan.exists(),
+        "the reaper counted a removal that did not happen"
+    );
+    assert!(
+        live_orphan.exists(),
+        "an old staging directory whose owning process is still alive was \
+         removed; the pid in the marker has to veto the age check"
+    );
+}
+
 /// The same guarantee for EWF, whose per-file bound is the segment size.
 ///
 /// An EWF acquisition rolls segments at `maximum_segment_size`, so that value —

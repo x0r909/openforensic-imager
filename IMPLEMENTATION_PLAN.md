@@ -585,7 +585,11 @@ These are recorded as accepted limitations, not open tasks:
   retained directory whose marker's process is gone and which is older than
   24 h). The residual limitation is that a job cancelled inside the 24 h window
   still occupies its retained bytes until the age passes — that window is what
-  makes ACQ-011 retention meaningful.
+  makes ACQ-011 retention meaningful. The liveness half of this control was
+  inert until Phase 9 fixed it: the probe was `kill(pid, 0)`, which the worker's
+  own seccomp filter refuses with `EPERM`, and `EPERM` was read as "alive", so
+  every orphan was kept. The probe is now `getpgid`; the full correction is
+  under residual risk 5 in `docs/security/phase8-review.md`.
 - The EWF read grant is computed once, before the parse, and names the image's
   segments individually (`libewf_bindings::segment_paths`) rather than the
   parent directory. Segments present when the policy is built stay readable for

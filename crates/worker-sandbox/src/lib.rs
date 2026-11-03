@@ -168,6 +168,16 @@ const ALLOWED_SYSCALLS: &[libc::c_long] = &[
     // Identity.
     libc::SYS_geteuid,
     libc::SYS_gettid,
+    // `getpid` and `getpgid` are here for the staging reaper, not for the
+    // parser: `acquisition::pid_is_alive` asks whether a marked staging
+    // directory's owner still exists, and with both refused the answer is
+    // wrong rather than unavailable. A refused `kill(pid, 0)` returns this
+    // filter's own `EPERM` — the same errno a live foreign process returns — so
+    // every orphan reads as alive. Both are pure queries: neither can signal,
+    // block, or inspect another process's memory, so neither needs an argument
+    // filter, unlike the `kill` the reaper originally used.
+    libc::SYS_getpid,
+    libc::SYS_getpgid,
     // Sandbox installation.
     libc::SYS_prctl,
     libc::SYS_seccomp,

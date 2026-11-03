@@ -44,8 +44,8 @@ pub struct ReaperReport {
 /// Removes orphaned staging directories under `destination_dir`.
 ///
 /// `process_is_alive` is injected so the PID check is testable without racing a
-/// real process: production passes a `kill(pid, 0)` probe, a test passes a
-/// closure over a fixed set.
+/// real process: production passes `pid_is_alive`, a test passes a closure over
+/// a fixed set.
 pub fn reap_stale_staging(
     destination_dir: &Path,
     max_age: Duration,
@@ -178,15 +178,32 @@ pub(crate) fn write_marker(
     })
 }
 
-/// Whether the process that owns `pid` still exists. `EPERM` means it exists but
-/// belongs to another user, which still counts as alive.
+/// Whether the process that owns `pid` still exists.
+///
+/// This runs inside `ofi-parser-worker`, under a default-deny seccomp filter
+/// (`worker-sandbox`). That is why it asks with `getpgid` and not with
+/// `kill(pid, 0)`: the filter refuses `kill`, and its refusal is `EPERM` — the
+/// very errno this function used to read as "exists but belongs to another
+/// user". Every pid therefore looked alive, and the reaper kept every orphan.
+/// `getpgid` is a pure query that takes no signal, so the filter allows it and
+/// the answer is real. It reports a live process's group, and `ESRCH` for a pid
+/// no process holds.
+///
+/// The default is still "alive": only an explicit `ESRCH` counts as gone. A
+/// probe that fails for any other reason — a future filter that refuses this
+/// too, or an LSM that answers `EPERM` — keeps the directory rather than
+/// deleting evidence someone may still be writing.
 pub fn pid_is_alive(pid: u32) -> bool {
     if pid == 0 {
         return false;
     }
-    let result = unsafe { libc::kill(pid as libc::pid_t, 0) };
-    if result == 0 {
+    let result = unsafe { libc::getpgid(pid as libc::pid_t) };
+    if result >= 0 {
         return true;
     }
-    std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+    // Only an explicit `ESRCH` means the pid is gone. Any other failure —
+    // including a filter that refuses this probe too — keeps the directory,
+    // because deleting evidence someone may still be writing is the worse
+    // error.
+    std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH)
 }
