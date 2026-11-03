@@ -226,6 +226,58 @@ no committed unit files, so a maintainer runs it by hand.
   ASan intercepts their allocator use, but their own reads and writes are not
   instrumented.
 
+## ARM64 clean-VM build (in progress)
+
+`scripts/test-clean-vm.sh --arch arm64 --mode build` boots a digest-pinned
+Ubuntu 26.04 ARM64 cloud image through AAVMF and builds the workspace natively
+inside it, with no KVM — the guest is emulated by TCG, so it runs far slower
+than this host. This is plan task C5.
+
+**What is proven.** The guest boots, cloud-init finishes, and the arm64 build
+compiles and runs the test suites. Run 6 (2026-11-03) compiled the whole
+workspace — the first run to clear `tsk-bindings`, `libewf-bindings`, and the
+seccomp filter's aarch64 build — and ran the binaries: **30 test binaries
+reported `test result: ok`**, and one failed, `worker_isolation`, with 5 passed
+and 5 failed of its 10. The five failures are all wall-clock deadlines, not
+assertions:
+
+```
+a_missing_ewf_segment_fails_the_job_instead_of_narrowing_it
+acquisition_larger_than_the_default_file_size_limit_completes
+an_ewf_segment_larger_than_the_default_file_size_limit_is_written
+ewf_reads_are_granted_per_segment_and_not_per_directory
+oversized_worker_response_is_stopped_at_the_cap
+```
+
+Each does megabytes-to-gigabytes of work — 2.5 MiB EWF with `verify_after`,
+a 4 GiB response flood, 70 MiB acquisitions hashed four ways — and each is
+bounded by a parent deadline written for native speed (10 s or 300 s). The
+worker's own budget is not the wall: `worker_timeout()` defaults to one hour.
+That the same five tests pass on bare-metal x86_64 in the same tree, and that
+the emulated guest hashes a 70 MiB image about nine times slower than this host
+(0.94 s here, 8.9 s in the guest), is what identifies the cause as emulation
+speed rather than a defect in the code under test.
+
+**The knob this produced.** `worker_isolation.rs` now reads
+`OFI_TEST_DEADLINE_SCALE` (default 1) and stretches every parent deadline and
+every worker budget by that factor, capped at `MAX_DEADLINE_SCALE`. The
+deadline stays finite at every factor, so a genuine hang still fails the test —
+after a longer, explicitly stated wait. `scripts/test-clean-vm.sh` sets it to
+10 by default for the in-guest run (`--deadline-scale`, documented in
+`--help`); pass `--deadline-scale 1` to reproduce the raw native deadlines. The
+mechanism is guarded by `packaging/tests/test_clean_vm_harness.sh`, which
+asserts the flag is documented, exported into the guest, and that its default
+lies inside the range the Rust reader accepts.
+
+**What is not proven.** The ARM64 item in `IMPLEMENTATION_PLAN.md` is **not
+ticked**. C5 step 2 continues past the test run into `scripts/package-deb.sh`
+and `scripts/package-appimage.sh`, and step 4 requires both packages to install
+and self-test inside the guest before the tick is earned; run 6 stopped at the
+failing suite, so packaging was never reached. A green suite under the scale is
+a prerequisite, not the tick. Emulation timings taken while this host is under
+load are inconclusive by the harness's own rule, and the five failures above
+were produced during such a window.
+
 ## Baseline commands on the same host
 
 ```
