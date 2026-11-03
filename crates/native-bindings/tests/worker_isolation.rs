@@ -126,6 +126,73 @@ unsafe fn submit(
     Ok(value["body"]["job_id"].as_str().unwrap().to_owned())
 }
 
+/// The widest stretch an operator may declare.
+///
+/// It exists so that a mistyped factor cannot turn a deadline into a wait that
+/// never ends: however large the scale, the job still has to finish. The
+/// longest deadline in this file is five minutes, so a hundredfold is around
+/// eight hours — finite, and large enough to be obviously deliberate.
+///
+/// It is also the documented ceiling for the value the harness passes. That
+/// value is not a guess: measured on this project's arm64 guest under TCG,
+/// against the workload the slowest tests actually do, `sha256sum` over a
+/// 70 MiB image takes 0.94 s natively and 8.9 s in the guest, about 9x. A
+/// synthetic arithmetic loop measures far worse (143x) because TCG translates
+/// every instruction while a hash spends its time in already-compiled native
+/// code; hashing is what these tests do, so it is what the factor is
+/// calibrated on.
+const MAX_DEADLINE_SCALE: u32 = 100;
+
+/// The factor by which this file's wall-clock deadlines are stretched.
+///
+/// Every deadline here is written for a host running the job natively. Under
+/// whole-system emulation the same job takes tens of times as long, and it is
+/// the deadline, not the code, that fails: `scripts/test-clean-vm.sh` boots
+/// arm64 through TCG, where a 70 MiB acquisition that takes a couple of minutes
+/// on the build host does not finish inside the five minutes this file allows.
+/// One slow host then reads as five broken tests.
+///
+/// `OFI_TEST_DEADLINE_SCALE` lets the emulated run declare its factor rather
+/// than have the suite guess it. The default of 1 leaves a native run exactly
+/// as it was.
+///
+/// The deadline stays finite at every factor — the job still has to reach a
+/// terminal state, so a genuine hang still fails the test, after a longer and
+/// explicitly stated wait rather than a ten-second one. A value that is not an
+/// integer, is zero, or exceeds [`MAX_DEADLINE_SCALE`] is ignored, so a typo
+/// leaves the native deadlines in place instead of removing the bound.
+fn deadline_scale() -> u32 {
+    let Ok(value) = std::env::var("OFI_TEST_DEADLINE_SCALE") else {
+        return 1;
+    };
+    match value.trim().parse::<u32>() {
+        Ok(scale) if (1..=MAX_DEADLINE_SCALE).contains(&scale) => scale,
+        _ => {
+            eprintln!(
+                "ignoring OFI_TEST_DEADLINE_SCALE={value:?}: expected an integer in \
+                 1..={MAX_DEADLINE_SCALE}"
+            );
+            1
+        }
+    }
+}
+
+/// A deadline written for native speed, stretched by [`deadline_scale`].
+fn scaled(deadline: Duration) -> Duration {
+    deadline * deadline_scale()
+}
+
+/// A worker budget written for native speed, stretched the same way.
+///
+/// The worker times a job out on its own clock (`OFI_WORKER_TIMEOUT_SECS`), and
+/// an emulated run has to stretch that too: a budget that kills the worker at
+/// sixty seconds fails the job with `worker.timeout` long before the parent's
+/// stretched deadline would fire, and the test would read as a worker defect
+/// rather than a slow host.
+fn scaled_budget(seconds: u64) -> String {
+    (seconds * u64::from(deadline_scale())).to_string()
+}
+
 fn wait_for_job(manager: *mut ofi_job_manager, job_id: &str) -> serde_json::Value {
     wait_for_job_within(manager, job_id, Duration::from_secs(10))
 }
@@ -135,13 +202,16 @@ fn wait_for_job(manager: *mut ofi_job_manager, job_id: &str) -> serde_json::Valu
 /// A test whose job hashes a large image needs longer than the 10 s that suits
 /// a job over a fixture: the four digests run over every byte, so the job is
 /// minutes of work even when nothing is wrong. The deadline is the test's to
-/// state, rather than the shared helper's to guess.
+/// state, rather than the shared helper's to guess — and it is written for a
+/// native host, then stretched by [`deadline_scale`] so an emulated run can
+/// declare the factor instead of every test being re-tuned for it.
 fn wait_for_job_within(
     manager: *mut ofi_job_manager,
     job_id: &str,
     within: Duration,
 ) -> serde_json::Value {
     let job_id = CString::new(job_id).unwrap();
+    let within = scaled(within);
     let deadline = Instant::now() + within;
     loop {
         let mut response = ptr::null_mut();
@@ -186,7 +256,7 @@ fn crashing_worker_is_contained_and_a_new_worker_can_run() {
     let mut environment = EnvironmentGuard::new();
     unsafe {
         environment.set("OFI_PARSER_WORKER", &crash);
-        environment.set("OFI_WORKER_TIMEOUT_SECS", "5");
+        environment.set("OFI_WORKER_TIMEOUT_SECS", scaled_budget(5));
     }
     let mut manager: *mut ofi_job_manager = ptr::null_mut();
     let mut error = ptr::null_mut();
@@ -236,7 +306,7 @@ fn worker_does_not_inherit_the_parent_environment() {
     unsafe {
         environment.set("OFI_PARSER_WORKER", &probe);
         environment.set("OFI_AUDIT_SECRET", "DUMMY_ENV_SECRET");
-        environment.set("OFI_WORKER_TIMEOUT_SECS", "5");
+        environment.set("OFI_WORKER_TIMEOUT_SECS", scaled_budget(5));
     }
     let mut manager: *mut ofi_job_manager = ptr::null_mut();
     let mut error = ptr::null_mut();
@@ -471,7 +541,7 @@ fn oversized_worker_response_is_stopped_at_the_cap() {
     let mut environment = EnvironmentGuard::new();
     unsafe {
         environment.set("OFI_PARSER_WORKER", &flood);
-        environment.set("OFI_WORKER_TIMEOUT_SECS", "60");
+        environment.set("OFI_WORKER_TIMEOUT_SECS", scaled_budget(60));
     }
     let mut manager: *mut ofi_job_manager = ptr::null_mut();
     let mut error = ptr::null_mut();
@@ -492,7 +562,7 @@ fn oversized_worker_response_is_stopped_at_the_cap() {
     assert_eq!(snapshot["body"]["status"], "failed");
     assert_eq!(snapshot["body"]["error_code"], "worker.response_too_large");
     assert!(
-        elapsed < Duration::from_secs(20),
+        elapsed < scaled(Duration::from_secs(20)),
         "the cap waited for the deadline instead of stopping the worker: {elapsed:?}"
     );
 
@@ -524,7 +594,7 @@ fn acquisition_larger_than_the_default_file_size_limit_completes() {
     // a sibling test left behind — would kill the worker mid-run. The test
     // declares its budget rather than inheriting one.
     let mut environment = EnvironmentGuard::new();
-    unsafe { environment.set("OFI_WORKER_TIMEOUT_SECS", "600") };
+    unsafe { environment.set("OFI_WORKER_TIMEOUT_SECS", scaled_budget(600)) };
 
     let directory = tempdir().unwrap();
     let source = directory.path().join("source.raw");
@@ -601,7 +671,7 @@ fn acquisition_larger_than_the_default_file_size_limit_completes() {
 fn a_source_smaller_than_the_file_size_floor_is_still_acquired() {
     let _guard = ENV_LOCK.lock().unwrap_or_else(|error| error.into_inner());
     let mut environment = EnvironmentGuard::new();
-    unsafe { environment.set("OFI_WORKER_TIMEOUT_SECS", "60") };
+    unsafe { environment.set("OFI_WORKER_TIMEOUT_SECS", scaled_budget(60)) };
 
     let directory = tempdir().unwrap();
     let source = directory.path().join("source.raw");
@@ -660,7 +730,7 @@ fn an_ewf_segment_larger_than_the_default_file_size_limit_is_written() {
     // As above: a 66 MiB EWF acquisition is minutes of hashing, so it declares
     // its own worker deadline instead of inheriting the ambient one.
     let mut environment = EnvironmentGuard::new();
-    unsafe { environment.set("OFI_WORKER_TIMEOUT_SECS", "600") };
+    unsafe { environment.set("OFI_WORKER_TIMEOUT_SECS", scaled_budget(600)) };
 
     let directory = tempdir().unwrap();
     let source = directory.path().join("source.raw");
@@ -787,7 +857,7 @@ fn a_block_device_is_acquired_through_the_worker_filter() {
     let _guard = ENV_LOCK.lock().unwrap_or_else(|error| error.into_inner());
     let mut environment = EnvironmentGuard::new();
     // The device is hashed four times over, which is real work even at 16 MiB.
-    unsafe { environment.set("OFI_WORKER_TIMEOUT_SECS", "300") };
+    unsafe { environment.set("OFI_WORKER_TIMEOUT_SECS", scaled_budget(300)) };
 
     let directory = tempdir().unwrap();
     let destination = directory.path().join("destination");
