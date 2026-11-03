@@ -238,8 +238,25 @@ compiles and runs the test suites. Run 6 (2026-11-03) compiled the whole
 workspace — the first run to clear `tsk-bindings`, `libewf-bindings`, and the
 seccomp filter's aarch64 build — and ran the binaries: **30 test binaries
 reported `test result: ok`**, and one failed, `worker_isolation`, with 5 passed
-and 5 failed of its 10. The five failures are all wall-clock deadlines, not
-assertions:
+and 5 failed of its 10.
+
+That failure was then diagnosed by running the same suite twice more inside the
+guest, on the same tree (`worker_isolation.rs` md5
+`4d62dfea2d5ef8a9fc7871553c9c102c`, the harness's own `git ls-files` copy), with
+the declared deadline factor as the only variable:
+
+| Run | `OFI_TEST_DEADLINE_SCALE` | Result |
+| --- | --- | --- |
+| RED | 1 (the native deadlines) | 5 passed; 5 failed — `finished in 633.13s`, exit 101 |
+| GREEN | 10 (the harness default) | **10 passed; 0 failed** — `finished in 2608.61s`, exit 0 |
+
+Both ran `--test-threads=1` on a guest whose 1-minute load average was below 2,
+so neither is the load window the harness's own rule calls inconclusive. The RED
+reproduced run 6's five failures with the same panic text and its wall time to
+within 0.7 s (632.40 s then, 633.13 s now), which corroborates run 6 rather than
+leaving it unconfirmed.
+
+The five failures are all wall-clock deadlines, not assertions:
 
 ```
 a_missing_ewf_segment_fails_the_job_instead_of_narrowing_it
@@ -274,9 +291,23 @@ ticked**. C5 step 2 continues past the test run into `scripts/package-deb.sh`
 and `scripts/package-appimage.sh`, and step 4 requires both packages to install
 and self-test inside the guest before the tick is earned; run 6 stopped at the
 failing suite, so packaging was never reached. A green suite under the scale is
-a prerequisite, not the tick. Emulation timings taken while this host is under
-load are inconclusive by the harness's own rule, and the five failures above
-were produced during such a window.
+a prerequisite, not the tick, and the green run above was the suite alone.
+
+The green result is also a statement about *behaviour*, not about speed: it
+shows the arm64 build of the worker, the sandbox, and the bindings runs the same
+job protocol and confinement correctly, which is what the tick asks about. It
+does not claim arm64 performance — the deadlines that run used are ten times the
+native ones, and the RED beside it is the record that the native ones are
+genuinely unachievable under emulation here rather than relaxed for convenience.
+
+Two further gaps belong with this item. The suite was run directly in a
+persistent diagnostic guest booted from the same digest-pinned image,
+`8eb876c2ccc4b6ff89e4a65d511815923b285e04503ba465809bf587f763da24`, matching
+`scripts/test-clean-vm.sh`'s `default_digest` — not by a full `--mode build`
+harness run, so the harness's own copy-out, digest verification, and in-guest
+package install have not yet executed end to end. And five of this suite's ten
+tests are bounded by deadlines written for native speed, so on this architecture
+the suite's timing budget is meaningful only with the factor declared.
 
 ## Baseline commands on the same host
 
