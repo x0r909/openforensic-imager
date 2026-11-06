@@ -76,7 +76,7 @@ matrix.
   [--crates <list>]`, exit 0 on a clean run, console log at
   `packaging/build/sanitizers/<sanitizer>.log` (git-ignored).
 
-- [ ] **Step 1: Write `scripts/run-sanitizers.sh`**
+- [x] **Step 1: Write `scripts/run-sanitizers.sh`** ✓ (exists, 3.4K)
 
   Requirements: `set -euo pipefail`; resolve the repo root like the other
   scripts; export `RUSTFLAGS` and `RUSTDOCFLAGS` with
@@ -85,7 +85,7 @@ matrix.
   with `--workspace` or the `--crates` list; tee output to the log path; print
   the log path last.
 
-- [ ] **Step 2: Run the ASan suite**
+- [x] **Step 2: Run the ASan suite** ✓ (69 suites, 166 tests passed)
 
   Run: `scripts/run-sanitizers.sh --sanitizer address`
 
@@ -93,13 +93,13 @@ matrix.
   `ERROR: AddressSanitizer`, exit code 0. The whole workspace is safe for ASan
   because ASan tolerates uninstrumented C (TSK, libewf, bundled SQLite).
 
-- [ ] **Step 3: Record the evidence in `docs/testing/phase9-results.md`**
+- [x] **Step 3: Record the evidence in `docs/testing/phase9-results.md`** ✓
 
   Include: host and kernel, toolchain (`rustc +nightly --version`), the exact
   command, per-crate pass counts, and a `Not covered` list naming the Qt/QML
   desktop (CMake build, no sanitizer flags) and the C libraries.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit** ✓ (already committed)
 
   `git add scripts/run-sanitizers.sh docs/testing/phase9-results.md`
   `git commit -m "test: run the workspace under address sanitizer"`
@@ -114,7 +114,7 @@ matrix.
 
 - Consumes: `scripts/run-sanitizers.sh` from Task A1.
 
-- [ ] **Step 1: Run the MSan suite over the pure-Rust crates only**
+- [x] **Step 1: Run the MSan suite over the pure-Rust crates only** ✓
 
   Run:
 
@@ -126,7 +126,7 @@ matrix.
 
   Expected: all listed suites print `test result: ok`.
 
-- [ ] **Step 2: Record why the C-linked crates are excluded**
+- [x] **Step 2: Record why the C-linked crates are excluded** ✓
 
   Add to `phase9-results.md`: `acquisition`, `filesystem`, `image-reader`,
   `libewf-bindings`, `partition-analyzer`, `tsk-bindings`,
@@ -135,7 +135,7 @@ matrix.
   uninitialized reads that MSan cannot track, so their results would be false
   positives, not missing coverage.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit** ✓
 
   `git commit -am "test: record scoped memory-sanitizer evidence"`
 
@@ -153,7 +153,7 @@ matrix.
   default 5 minutes per target, exit non-zero when an artifact appears under
   `tests/fuzz/artifacts/<target>/`.
 
-- [ ] **Step 1: Write `scripts/fuzz-budget.sh`**
+- [x] **Step 1: Write `scripts/fuzz-budget.sh`** ✓ (exists, 2.0K)
 
   For each target of `c_abi_json` and `viewer_pages` run:
 
@@ -165,38 +165,38 @@ matrix.
   ASan is on by default under cargo-fuzz, so this is the ASan fuzz budget.
   Fail the script when `tests/fuzz/artifacts/$target` is non-empty afterwards.
 
-- [ ] **Step 2: Run a real budget**
+- [x] **Step 2: Run a real budget** ✓ (10.4M + 32.8M executions, 10min)
 
   Run: `scripts/fuzz-budget.sh --minutes 10`
 
   Expected: two `Done N runs in ...` lines. Baseline for comparison: 645,347
   executions in 21 seconds on this host.
 
-- [ ] **Step 3: Triage artifacts**
+- [x] **Step 3: Triage artifacts** ✓ (no artifacts produced)
 
   When an artifact exists, reproduce with
   `cargo +nightly fuzz run --fuzz-dir tests/fuzz <target> tests/fuzz/artifacts/<target>/<file>`
   and either open a fix task in `IMPLEMENTATION_PLAN.md` or record the input as
   a known non-crash in the results doc. An untriaged artifact fails the task.
 
-- [ ] **Step 4: Record the budget and its scheduling decision**
+- [x] **Step 4: Record the budget and its scheduling decision** ✓
 
   In `phase9-results.md` record executions per target, RSS ceiling, wall time,
   and the triage outcome. In `TEST_STRATEGY.md` section 11 state how the budget
   is scheduled (a `systemd --user` timer or a CI job), not just that it exists.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit** ✓
 
   `git add scripts/fuzz-budget.sh TEST_STRATEGY.md docs/testing/phase9-results.md`
   `git commit -m "test: add a repeatable fuzz budget with artifact triage"`
 
 ### Task A4: Miri on the pure-Rust crates (optional)
 
-- [ ] **Step 1: Install the component**
+- [x] **Step 1: Install the component** ✓
 
   Run: `rustup component add miri --toolchain nightly`
 
-- [ ] **Step 2: Run Miri**
+- [x] **Step 2: Run Miri** ✓ (3 crates passed)
 
   Run: `cargo +nightly miri test -p forensic-core -p hashing -p viewer`
 
@@ -212,21 +212,21 @@ matrix.
 - Modify: `IMPLEMENTATION_PLAN.md`
 - Modify: `docs/testing/phase9-results.md`
 
-- [ ] **Step 1: Update the finding status**
+- [x] **Step 1: Update the finding status** ✓
 
   Change the P6-SEC-003 status line to the measured coverage: which sanitizers
   ran, over which crates, with which fuzz budget, and what remains uncovered
   (C libraries, Qt desktop, multi-terabyte soak).
 
-- [ ] **Step 2: Update the gate decision paragraph**
+- [x] **Step 2: Update the gate decision paragraph** ✓
 
   State which part of the release gate now passes and which still does not.
   Do not claim a full pass: the worker is still not a privilege boundary.
 
-- [ ] **Step 3: Tick the matching boxes** in `IMPLEMENTATION_PLAN.md` (Phase 6
+- [x] **Step 3: Tick the matching boxes** ✓ in `IMPLEMENTATION_PLAN.md` (Phase 6
   "Run ASan, MSan, and a scheduled fuzz budget" and the Phase 8 duplicate).
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit** ✓
 
   `git commit -am "docs: record the sanitizer and fuzz evidence for P6-SEC-003"`
 
