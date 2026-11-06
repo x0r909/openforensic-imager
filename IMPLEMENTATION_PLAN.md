@@ -537,12 +537,12 @@ cross-distribution, licensing, native dependency pinning, and device tests pass.
   Requires: the project license decision.
 
 Phase 8 closes the parser-dispatch portion of P6-SEC-001 on the local host. The
-sanitizer and fuzz evidence landed in Phase 9; the production security and
-distribution gates remain open for clean-system testing, the worker's
-privilege-boundary decision (`docs/security/worker-privilege-boundary.md`
-recommends a dedicated system user and is not implemented), multi-terabyte
-soak, native dependency pinning, and licensing. The executable results are
-recorded in
+sanitizer and fuzz evidence landed in Phase 9; the worker's privilege boundary
+is implemented as a dedicated `ofi-worker` system user
+(`docs/security/worker-privilege-boundary.md`, 2026-11-06). The production
+security and distribution gates remain open for clean-system testing,
+multi-terabyte soak, native dependency pinning, and licensing. The executable
+results are recorded in
 [`docs/testing/phase8-results.md`](docs/testing/phase8-results.md).
 
 ### Phase 8 security fixes
