@@ -1,5 +1,7 @@
+use std::path::PathBuf;
+
 use forensic_core::ByteRange;
-use image_reader::{ImageErrorCode, ImageFormat, ImageReader, RawReader};
+use image_reader::{ImageErrorCode, ImageFormat, ImageReader, RawReader, open_image};
 use tempfile::tempdir;
 
 #[test]
@@ -85,4 +87,26 @@ fn file_change_after_open_is_reported() {
     let error = reader.read_exact_at(range, &mut output).unwrap_err();
 
     assert_eq!(error.code(), ImageErrorCode::ConcurrentModification);
+}
+
+#[test]
+fn open_image_accepts_a_relative_path() {
+    // The worker can receive a source path relative to its working directory,
+    // and `libewf_check_file_signature` fails with "unable to set filename"
+    // when handed one. `open_image` must canonicalize so a relative path opens
+    // as a raw read rather than failing as a spurious Backend error.
+    // Note: the file must live under the current working directory, so the
+    // relative form is genuinely resolvable (a tempdir under /tmp would not be).
+    let cwd = std::env::current_dir().unwrap();
+    let absolute = cwd.join("target/tmp-relative-path-test/evidence.raw");
+    std::fs::create_dir_all(absolute.parent().unwrap()).unwrap();
+    std::fs::write(&absolute, b"forensic soak").unwrap();
+    let relative: PathBuf = absolute.strip_prefix(&cwd).unwrap().to_path_buf();
+
+    let reader = open_image(&relative).unwrap();
+
+    std::fs::remove_dir_all(absolute.parent().unwrap()).unwrap();
+
+    assert_eq!(reader.logical_length(), 13);
+    assert_eq!(reader.metadata().format, ImageFormat::Raw);
 }
