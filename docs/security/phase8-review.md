@@ -179,9 +179,10 @@ is parsed. There is no silent reduced-assurance path.
 
 ## Release gate decision
 
-Phase 8 closes the parser-dispatch portion of P6-SEC-001. The release security
-gate is **not** fully passed: the worker is not a privilege boundary, and the
-residual risks above are accepted limitations rather than fixes. The sanitizer
-condition this review left open was met in Phase 9 (risk 7).
+Phase 8 closes the parser-dispatch portion of P6-SEC-001. Worker privilege
+separation was completed on 2026-11-06 (residual risk 1), and the sanitizer
+condition was met in Phase 9 (risk 7). The release security gate still does not
+fully pass: multi-terabyte and long-duration runs require release hardware,
+and several residual risks above are accepted limitations rather than fixes.
 
 See [phase6-review.md](phase6-review.md) for the full finding list.

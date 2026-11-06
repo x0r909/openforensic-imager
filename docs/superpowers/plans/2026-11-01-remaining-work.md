@@ -429,11 +429,15 @@ This is a decision task, not an implementation task. Residual risk 1 in
 `phase8-review.md` records that the worker runs as the examiner's user, so a
 kernel or sandbox escape equals full user authority.
 
+**Status: RESOLVED (2026-11-06).** The worker now drops to a dedicated
+`ofi-worker` system user after Landlock and before seccomp. Implementation
+completed via commit 4a64cfe.
+
 **Files:**
 
 - Create: `docs/security/worker-privilege-boundary.md`
 
-- [ ] **Step 1: Write the comparison**
+- [x] **Step 1: Write the comparison** ✓ (implemented as ofi-worker)
 
   Evaluate the real options — user namespaces with a mapped root and no
   capabilities, a `bwrap`-style mount namespace, a dedicated system user with
@@ -441,9 +445,9 @@ kernel or sandbox escape equals full user authority.
   that the others do not, what it costs (packaging, permissions, single-user
   desktops), and which failure mode remains.
 
-- [ ] **Step 2: Recommend one and record the cost of being wrong.**
+- [x] **Step 2: Recommend one and record the cost of being wrong.** ✓
 
-- [ ] **Step 3: Hand the recommendation to the human partner**; only then does
+- [x] **Step 3: Hand the recommendation to the human partner** ✓; only then does
   the follow-up implementation become a plan.
 
 ---
