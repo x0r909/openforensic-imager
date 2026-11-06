@@ -161,8 +161,10 @@ defects are resolved.
 
 ## Residual risks
 
-- Native parser defects are contained by a separate worker process, but the
-  worker is not a privilege boundary against kernel or sandbox escapes.
+- Native parser defects are contained by a separate worker process, and the
+  worker drops to a dedicated `ofi-worker` system user after Landlock grants,
+  so a kernel or sandbox escape runs as that low-privilege account rather than
+  the examiner's uid (see `phase8-review.md` residual risk 1).
 - A fixed fuzz budget does not establish parser safety. Ten minutes per target
   with no artifact bounds the defect classes those two targets can reach; TSK,
   libewf, and the bundled SQLite are uninstrumented C, and the Qt desktop is not
@@ -197,18 +199,17 @@ scoped MSan, and a ten-minute fuzz budget per target all completed with no
 report, no artifact, and no memory growth toward the ceiling, and
 `scripts/fuzz-budget.sh` makes the budget repeatable rather than a one-off.
 
-Two parts of the gate still do not pass, and neither is closed by the sanitizer
-evidence:
+One part of the gate still does not pass:
 
-- **The worker is not a privilege boundary against a kernel or sandbox escape.**
-  The seccomp allow-list, the age-and-liveness reaper, and per-segment EWF read
-  grants all narrow what a compromised parser can reach, but a compromise still
-  runs as the examiner's uid. `docs/security/worker-privilege-boundary.md`
-  assesses four options and recommends a dedicated system user for the DEB;
-  that recommendation is **not implemented**, so the gate stays open.
 - **Long-duration acquisition on release hardware is unrun.** A fixed fuzz
   budget and a sanitizer pass say nothing about multi-terabyte throughput or
   memory stability over hours.
+
+The worker privilege boundary, which this gate previously held open, is now
+implemented: the worker drops to a dedicated `ofi-worker` system user after
+Landlock grants and before parsing evidence, so a compromise runs as that
+low-privilege account, not the examiner's uid. See `phase8-review.md` residual
+risk 1 for the implementation and test evidence.
 
 Sanitizer coverage is therefore evidence that a class of defect was looked for
 and not found. It is not a certification, and this paragraph is not a
