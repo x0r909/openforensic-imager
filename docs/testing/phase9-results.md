@@ -226,7 +226,12 @@ no committed unit files, so a maintainer runs it by hand.
   ASan intercepts their allocator use, but their own reads and writes are not
   instrumented.
 
-## ARM64 clean-VM build (in progress)
+## ARM64 clean-VM build
+
+Status (2026-11-03): the guest builds, tests, and packages natively; the DEB
+installs and self-tests. `IMPLEMENTATION_PLAN.md`'s ARM64 item remains
+**unticked** — the AppImage half of the Step 4 gate has not installed and
+self-tested, and one harness defect that gated the DEB half was found here.
 
 `scripts/test-clean-vm.sh --arch arm64 --mode build` boots a digest-pinned
 Ubuntu 26.04 ARM64 cloud image through AAVMF and builds the workspace natively
@@ -308,6 +313,73 @@ harness run, so the harness's own copy-out, digest verification, and in-guest
 package install have not yet executed end to end. And five of this suite's ten
 tests are bounded by deadlines written for native speed, so on this architecture
 the suite's timing budget is meaningful only with the factor declared.
+
+### Artifacts and native dependency versions (C5 step 3)
+
+The arm64 DEB was built in the guest, copied out, and its digest computed twice —
+once in the guest and once on this host after `scp` — so the copy is
+byte-faithful rather than merely complete:
+
+| Artifact | Bytes | SHA-256 |
+| --- | --- | --- |
+| `openforensic-imager_0.1.0_arm64.deb` | 1,626,108 | `a4bd81d4e141a6e7645b15b501a0d861bab60b232148f6673b6f8778923e4fb4` |
+| `openforensic-imager-0.1.0.cdx.json` | 59,160 | (recorded in the `.sha256` beside it) |
+
+The arm64 base image is Ubuntu 26.04.1 LTS, kernel 7.0.0-38-generic, and
+provides these native versions:
+
+| Package | Version |
+| --- | --- |
+| `libewf-dev` | 20140816-2build1 |
+| `libtsk-dev` | 4.12.1+dfsg-3build1 |
+| `qt6-base-dev` | 6.10.2+dfsg-7 |
+
+The runtime side of that list is worth stating explicitly, because the packages
+are **not** named the way the development ones are. The DEB's `Depends` names
+`libtsk19t64`, `libafflib0t64`, and `libqt6core6t64`; the pre-`t64` spellings
+(`libtsk19`, `libafflib0v5`, `libqt6core6`) do not resolve on this image at all.
+All three `t64` packages are present at the versions above, and
+`apt-get install -s` on the built DEB reports no unsatisfied dependency. A
+dependency-matrix reader that greps for the old names will wrongly conclude TSK
+is missing.
+
+### What the Step 4 gate found, and its current state
+
+Reading the recorded install log rather than the harness's success marker, the
+gate's first run had failed on every arm while the script exited 0. Two defects,
+both in the run's environment rather than in the artifact:
+
+1. **The self-test aborted before it ran.** `apps/desktop/src/main.cpp:11`
+   constructs `QApplication`; `:33` parses `--self-test`. With no display, Qt
+   aborts on the missing xcb plugin at construction — `rc=134` — before the
+   option is read. The repository's own ctest entries carry
+   `ENVIRONMENT "QT_QPA_PLATFORM=offscreen"` (`apps/desktop/CMakeLists.txt:166,171`)
+   and the Flatpak test sets it too (`packaging/tests/test_flatpak_build.sh:20,58`);
+   both arms of `scripts/test-clean-vm.sh` had dropped it.
+2. **The AppImage never built.** `convert` delegates SVG rendering to
+   `rsvg-convert`, which ships in `librsvg2-bin`, which the guest's apt list did
+   not include. `package-appimage.sh` exited 1 at the icon step.
+
+Both are fixed in the harness (`:733` build arm, `:756` install arm, and
+`librsvg2-bin` in the guest package list), and the offscreen requirement is now
+pinned by check 4c of `packaging/tests/test_clean_vm_harness.sh`, which reads
+each arm's text separately — stripping only the `install` arm still fails it.
+
+The measured state of the gate, in the same guest, on the installed artifact:
+
+| Invocation | `QT_QPA_PLATFORM` | Exit |
+| --- | --- | --- |
+| `openforensic-imager --self-test` | `offscreen` | 0 |
+| `openforensic-imager --dark --self-test` | `offscreen` | 0 |
+| `openforensic-imager --dark --self-test` | unset | **134** |
+
+The third row is the counterfactual: the same binary and guest, with only the
+platform variable removed, reproduce the original abort. That is what identifies
+the fix as a repair of the *harness* rather than a relaxation of the gate — an
+AppImage that genuinely failed to start would fail with the variable set too.
+
+**The DEB half of Step 4 is met** and the AppImage half is not; the item stays
+unticked until both are.
 
 ## Baseline commands on the same host
 

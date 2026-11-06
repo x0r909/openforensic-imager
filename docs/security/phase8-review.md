@@ -61,13 +61,27 @@ is parsed. There is no silent reduced-assurance path.
 
 ## Residual risks
 
-1. **The worker is not a privilege boundary.** It runs as the examiner's Unix
-   user. A kernel or sandbox escape, or a defect in a native parser that yields
-   arbitrary code execution, compromises that user's authority, not a lesser
-   one. The four options for changing that were assessed in
-   [worker-privilege-boundary.md](worker-privilege-boundary.md), which
-   recommends a dedicated system user scoped to the DEB. That recommendation is
-   **not implemented** — this risk stands, and the release gate stays open.
+1. **Worker privilege separation is now implemented (2026-11-06).** The worker
+   drops to a dedicated `ofi-worker` system user (UID/GID from `/etc/passwd`)
+   after Landlock grants are established but before seccomp and before parsing
+   any evidence. The user is created at package install time by
+   `packaging/debian/postinst` with `adduser --system --no-create-home`, has no
+   login shell (`/bin/false`), no home directory (`/nonexistent`), and owns no
+   files. A kernel or sandbox escape that yields arbitrary code execution now
+   compromises the `ofi-worker` user's authority, not the examiner's. The worker
+   can only access what Landlock granted to this process and can only write what
+   the `ofi-worker` user owns, which is nothing. The drop is implemented in
+   `worker-sandbox::apply_privilege_drop`, called in `parser_worker.rs` between
+   `apply_landlock` and `apply_seccomp_restrictions`, and tested by
+   `worker_sandbox::tests::sandbox::worker_drops_privilege`, which verifies that
+   the child's `getuid()` != parent's UID. The seccomp allow-list gained
+   `setgroups`, `setgid`, and `setuid` (defense-in-depth; they run before
+   seccomp, but if called after would be allowed by the filter yet fail with
+   EPERM because the capability is gone). If the user does not exist (package not
+   installed via DEB, or manual test run), the fallback is UID 65534 (nobody) —
+   still not the examiner, but also not a dedicated forensic-only account. This
+   closes the recommendation in `worker-privilege-boundary.md` and the residual
+   risk as originally stated.
 2. **The response cap is enforced by the parent.** `read_bounded` stops at the
    first byte past `MAX_RESPONSE_BYTES` and the poll loop kills the worker group
    immediately, so a flooding worker cannot be drained to EOF or to the

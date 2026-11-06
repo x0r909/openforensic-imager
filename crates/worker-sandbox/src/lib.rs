@@ -184,6 +184,13 @@ const ALLOWED_SYSCALLS: &[libc::c_long] = &[
     libc::SYS_landlock_create_ruleset,
     libc::SYS_landlock_add_rule,
     libc::SYS_landlock_restrict_self,
+    // Privilege drop. These run before seccomp, but they're here for
+    // defense-in-depth: even if they were called after seccomp, they'd be
+    // allowed by the filter but fail with EPERM because the capability to
+    // actually change UID/GID is gone once the privilege drop succeeds.
+    libc::SYS_setgroups,
+    libc::SYS_setgid,
+    libc::SYS_setuid,
     // Runtime bookkeeping.
     #[cfg(target_arch = "x86_64")]
     libc::SYS_arch_prctl,
@@ -485,6 +492,46 @@ pub fn apply_seccomp_restrictions() -> Result<(), SandboxError> {
     if result < 0 {
         return Err(last_error("seccomp filter installation failed"));
     }
+    Ok(())
+}
+
+/// Drop to a dedicated low-privilege user after Landlock and before seccomp.
+///
+/// The worker runs as a dedicated `ofi-worker` system user (created at package
+/// install time) instead of the examiner's user. This contains the blast radius
+/// of arbitrary code execution in a compromised parser: the worker can only
+/// access what Landlock granted to this process, and can only write what the
+/// `ofi-worker` user owns, which is nothing.
+///
+/// Call this after `apply_landlock` (so the grants are established before
+/// dropping privilege) and before `apply_seccomp_restrictions` (so these
+/// syscalls run while they're still permitted). Once seccomp is active, the
+/// capability to actually change UID/GID is gone, so calling this after seccomp
+/// would fail with EPERM even though the filter allows it.
+///
+/// # Errors
+///
+/// Returns an error if `setgroups`, `setgid`, or `setuid` fails. A failure here
+/// aborts the job before any evidence is parsed, which is the fail-closed rule:
+/// the worker refuses to run with elevated privilege if the drop fails.
+pub fn apply_privilege_drop(uid: u32, gid: u32) -> Result<(), SandboxError> {
+    // Drop supplementary groups first. An empty list means the process belongs
+    // to no groups beyond the primary GID.
+    if unsafe { libc::setgroups(0, std::ptr::null()) } != 0 {
+        return Err(last_error("setgroups(0, NULL) failed"));
+    }
+
+    // Drop to the target GID.
+    if unsafe { libc::setgid(gid) } != 0 {
+        return Err(last_error(&format!("setgid({gid}) failed")));
+    }
+
+    // Drop to the target UID. This is irreversible: once the effective UID is
+    // non-zero, the process cannot regain root even if it wanted to.
+    if unsafe { libc::setuid(uid) } != 0 {
+        return Err(last_error(&format!("setuid({uid}) failed")));
+    }
+
     Ok(())
 }
 

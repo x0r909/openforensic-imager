@@ -1,0 +1,38 @@
+#!/bin/bash
+set -e
+
+# postinst script for openforensic-imager
+# Creates the ofi-worker system user for privilege separation.
+
+case "$1" in
+    configure)
+        # Create the ofi-worker system user if it doesn't exist.
+        # - No login shell (/bin/false)
+        # - No home directory (/nonexistent)
+        # - System user (-r)
+        # - Owns no files
+        #
+        # The worker drops to this UID after Landlock grants are established
+        # but before parsing any evidence. This contains the blast radius of
+        # arbitrary code execution in a compromised parser.
+        if ! getent passwd ofi-worker > /dev/null 2>&1; then
+            adduser --system --group --no-create-home \
+                --home /nonexistent --shell /bin/false \
+                --gecos "OpenForensic Imager worker" \
+                ofi-worker
+            echo "Created ofi-worker system user for privilege separation"
+        fi
+        ;;
+
+    abort-upgrade|abort-remove|abort-deconfigure)
+        ;;
+
+    *)
+        echo "postinst called with unknown argument \`$1'" >&2
+        exit 1
+        ;;
+esac
+
+#DEBHELPER#
+
+exit 0

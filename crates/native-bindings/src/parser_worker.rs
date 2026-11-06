@@ -28,8 +28,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use viewer::{ByteSource, SourceError, hex_page, identify_signature, preview_text};
 use worker_sandbox::{
-    ResourceLimits, SandboxPolicy, apply_landlock, apply_resource_limits,
-    apply_seccomp_restrictions,
+    ResourceLimits, SandboxPolicy, apply_landlock, apply_privilege_drop,
+    apply_resource_limits, apply_seccomp_restrictions,
 };
 
 use super::{JobRequest, job_success, job_value};
@@ -145,6 +145,7 @@ fn process_request(bytes: &[u8]) -> WorkerResponse {
     };
     if let Err(error) = apply_resource_limits(&file_size_limits(&request))
         .and_then(|()| apply_landlock(&policy))
+        .and_then(|()| apply_privilege_drop(ofi_worker_uid(), ofi_worker_gid()))
         .and_then(|()| apply_seccomp_restrictions())
     {
         return WorkerResponse::error("worker.sandbox", error.message().to_owned());
@@ -855,6 +856,40 @@ pub fn sandbox_paths_for_debug(request: &[u8]) -> Result<(Vec<PathBuf>, Vec<Path
     let request: JobRequest = serde_json::from_slice(request).map_err(|error| error.to_string())?;
     let policy = sandbox_policy(&request).map_err(|error| error.message().to_owned())?;
     Ok((policy.read_paths, policy.write_paths))
+}
+
+/// Return the UID of the `ofi-worker` system user.
+///
+/// This user is created at package install time (DEB postinst) and has no login
+/// shell, no home directory, and owns no files. The worker drops to this UID
+/// after Landlock grants are established but before any evidence is parsed.
+///
+/// If the user does not exist, returns UID 65534 (nobody) as a safe fallback.
+/// The worker will still run, but without the intended privilege separation.
+fn ofi_worker_uid() -> u32 {
+    let name = std::ffi::CString::new("ofi-worker").unwrap();
+    let pwd = unsafe { libc::getpwnam(name.as_ptr()) };
+    if pwd.is_null() {
+        eprintln!("warning: ofi-worker user not found, falling back to nobody (65534)");
+        65534
+    } else {
+        unsafe { (*pwd).pw_uid }
+    }
+}
+
+/// Return the GID of the `ofi-worker` system user's primary group.
+///
+/// See `ofi_worker_uid` for rationale. Falls back to GID 65534 (nogroup) if the
+/// user does not exist.
+fn ofi_worker_gid() -> u32 {
+    let name = std::ffi::CString::new("ofi-worker").unwrap();
+    let pwd = unsafe { libc::getpwnam(name.as_ptr()) };
+    if pwd.is_null() {
+        eprintln!("warning: ofi-worker user not found, falling back to nogroup (65534)");
+        65534
+    } else {
+        unsafe { (*pwd).pw_gid }
+    }
 }
 
 fn sandbox_policy(request: &JobRequest) -> Result<SandboxPolicy, JobError> {
