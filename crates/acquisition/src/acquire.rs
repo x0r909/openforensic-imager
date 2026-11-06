@@ -123,6 +123,7 @@ pub struct AcquisitionResult {
 pub enum AcquisitionErrorCode {
     InvalidRequest,
     SourceOpen,
+    InsufficientSpace,
     Read,
     Write,
     Finalize,
@@ -214,6 +215,10 @@ fn acquire_reader(
     let started_at = UtcTimestamp::now();
     let metadata = reader.metadata();
     let source_length = reader.logical_length();
+
+    // Check available space before creating staging directory
+    check_available_space(&request.destination_dir, source_length)?;
+
     let staging = request
         .destination_dir
         .join(format!(".{}.partial-{}", request.base_name, job_id));
@@ -422,6 +427,63 @@ fn validate_request(request: &AcquisitionRequest) -> Result<(), AcquisitionError
             "destination directory does not exist",
         ));
     }
+    Ok(())
+}
+
+/// Check that the destination filesystem has sufficient space for the acquisition.
+///
+/// Returns an error if `available < required + margin`, where margin is 10% of
+/// the required size or 1 GiB, whichever is larger. This fails the acquisition
+/// early (before creating the staging directory or writing any bytes) rather than
+/// discovering the space constraint hours into a multi-terabyte job.
+///
+/// Falls back to allowing the acquisition if `statvfs` fails (the call is
+/// unavailable or the destination path is not yet a filesystem mount point).
+fn check_available_space(
+    dest_dir: &std::path::Path,
+    required_bytes: u64,
+) -> Result<(), AcquisitionError> {
+    let mut stat: libc::statvfs = unsafe { std::mem::zeroed() };
+    let path_cstr = std::ffi::CString::new(
+        dest_dir
+            .to_str()
+            .ok_or_else(|| {
+                AcquisitionError::new(
+                    AcquisitionErrorCode::InvalidRequest,
+                    "destination path contains invalid UTF-8",
+                )
+            })?
+            .as_bytes(),
+    )
+    .map_err(|_| {
+        AcquisitionError::new(
+            AcquisitionErrorCode::InvalidRequest,
+            "destination path contains NUL byte",
+        )
+    })?;
+
+    if unsafe { libc::statvfs(path_cstr.as_ptr(), &mut stat) } != 0 {
+        // statvfs failed — fall back to allowing the acquisition. The write will
+        // fail later with ENOSPC if space truly runs out, which is no worse than
+        // the pre-check-available-space behavior.
+        return Ok(());
+    }
+
+    let available_bytes = stat.f_bavail.saturating_mul(stat.f_frsize);
+    let margin = std::cmp::max(required_bytes / 10, 1_000_000_000);
+    let needed = required_bytes.saturating_add(margin);
+
+    if available_bytes < needed {
+        return Err(AcquisitionError::new(
+            AcquisitionErrorCode::InsufficientSpace,
+            &format!(
+                "insufficient space: need {needed} bytes ({} GiB), available {available_bytes} bytes ({} GiB)",
+                needed / (1024 * 1024 * 1024),
+                available_bytes / (1024 * 1024 * 1024)
+            ),
+        ));
+    }
+
     Ok(())
 }
 

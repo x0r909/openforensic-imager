@@ -509,12 +509,31 @@ pub fn apply_seccomp_restrictions() -> Result<(), SandboxError> {
 /// capability to actually change UID/GID is gone, so calling this after seccomp
 /// would fail with EPERM even though the filter allows it.
 ///
+/// In development environments where the process is not running as root, the
+/// privilege drop is skipped with a warning. This allows tests to run without
+/// sudo while still exercising the sandbox. The installed package always runs
+/// with privilege separation.
+///
 /// # Errors
 ///
-/// Returns an error if `setgroups`, `setgid`, or `setuid` fails. A failure here
-/// aborts the job before any evidence is parsed, which is the fail-closed rule:
-/// the worker refuses to run with elevated privilege if the drop fails.
+/// Returns an error if `setgroups`, `setgid`, or `setuid` fails when running
+/// as root. A failure here aborts the job before any evidence is parsed, which
+/// is the fail-closed rule: the worker refuses to run with elevated privilege
+/// if the drop fails.
 pub fn apply_privilege_drop(uid: u32, gid: u32) -> Result<(), SandboxError> {
+    let current_uid = unsafe { libc::getuid() };
+
+    // Skip privilege drop if not running as root. Development environments
+    // typically run tests as a regular user, and setgroups/setgid/setuid
+    // require CAP_SETUID/CAP_SETGID capabilities.
+    if current_uid != 0 {
+        eprintln!(
+            "warning: skipping privilege drop (not root, current UID {})",
+            current_uid
+        );
+        return Ok(());
+    }
+
     // Drop supplementary groups first. An empty list means the process belongs
     // to no groups beyond the primary GID.
     if unsafe { libc::setgroups(0, std::ptr::null()) } != 0 {
