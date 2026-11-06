@@ -247,7 +247,7 @@ matrix.
 
 - `apply_seccomp_restrictions()` keeps its signature; no caller changes.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
   In `sandbox_child` add, after the fork assertion:
 
@@ -261,7 +261,7 @@ matrix.
   );
   ```
 
-- [ ] **Step 2: Run it and confirm it fails**
+- [x] **Step 2: Run it and confirm it fails**
 
   Run: `cargo test -p worker-sandbox --test sandbox`
 
@@ -269,7 +269,7 @@ matrix.
   not mention it. That failure is the proof the test distinguishes allow-list
   from deny-list behaviour.
 
-- [ ] **Step 3: Derive the allow-list from the real workload**
+- [x] **Step 3: Derive the allow-list from the real workload**
 
   ```
   strace -f -qq -e trace=all -o /tmp/ofi-worker.strace \
@@ -281,13 +281,13 @@ matrix.
   Review the set and keep only what the worker needs; record one justification
   line per syscall family in the code comment above `ALLOWED_SYSCALLS`.
 
-- [ ] **Step 4: Implement default-deny**
+- [x] **Step 4: Implement default-deny**
 
   Replace `DENIED_SYSCALLS` with `ALLOWED_SYSCALLS`; keep the arch check
   returning `SECCOMP_RET_KILL_PROCESS`; return
   `SECCOMP_RET_ERRNO | EPERM as u32` for everything else.
 
-- [ ] **Step 5: Prove the worker still works end to end**
+- [x] **Step 5: Prove the worker still works end to end**
 
   Run: `cargo test -p worker-sandbox -p native-bindings`
 
@@ -295,7 +295,7 @@ matrix.
   the worker) and `worker_isolation.rs`. A missing allow-list entry shows up
   here as an EPERM failure inside a job.
 
-- [ ] **Step 6: Update the docs and commit**
+- [x] **Step 6: Update the docs and commit**
 
   Rewrite residual risk 3 in `phase8-review.md`; state in `SECURITY_MODEL.md`
   that the filter is now default-deny.
@@ -322,7 +322,7 @@ matrix.
 - Produces: a `.ofi-staging.json` marker inside every staging directory, with
   `{"job_id": "...", "pid": N, "started_at_unix_ms": N}`.
 
-- [ ] **Step 1: Write the failing tests** in `crates/acquisition/tests/acquire.rs`
+- [x] **Step 1: Write the failing tests** in `crates/acquisition/tests/acquire.rs`
 
   ```rust
   #[test]
@@ -338,13 +338,13 @@ matrix.
   fn fresh_cancelled_staging_survives_the_reaper() { /* ACQ-011 retention still holds */ }
   ```
 
-- [ ] **Step 2: Run them and confirm they fail**
+- [x] **Step 2: Run them and confirm they fail**
 
   Run: `cargo test -p acquisition --test acquire`
 
   Expected: FAIL — `reap_stale_staging` does not exist yet.
 
-- [ ] **Step 3: Implement the marker and the reaper**
+- [x] **Step 3: Implement the marker and the reaper**
 
   Write the marker right after `std::fs::create_dir(&staging)`; remove it when
   the staging directory is promoted or deliberately retained. The reaper scans
@@ -352,19 +352,19 @@ matrix.
   `max_age`, keeps entries whose marker pid is alive, and treats an unreadable
   marker as stale only when the directory itself is older than `max_age`.
 
-- [ ] **Step 4: Call the reaper on the acquisition path**
+- [x] **Step 4: Call the reaper on the acquisition path**
 
   Call it once at the start of `acquire_path_with_cancel` for the destination
   directory and surface `reaped` (count) in the acquisition manifest JSON. A
   reaper failure must not fail the acquisition; record it as a warning field.
 
-- [ ] **Step 5: Run the tests**
+- [x] **Step 5: Run the tests**
 
   Run: `cargo test -p acquisition` and then `cargo test --workspace`
 
   Expected: PASS, including `cancelled_acquisition_reports_its_retained_staging_directory`.
 
-- [ ] **Step 6: Update the residual risk and commit**
+- [x] **Step 6: Update the residual risk and commit**
 
   `git commit -am "fix(acquisition): reap orphaned staging directories by age and liveness"`
 
@@ -384,7 +384,7 @@ matrix.
   `libewf-bindings`: every existing sibling whose extension is `E01..E99` or
   `EAA..` in any case, starting with the given path when it exists.
 
-- [ ] **Step 1: Write the failing naming test**
+- [x] **Step 1: Write the failing naming test**
 
   ```rust
   #[test]
@@ -395,23 +395,23 @@ matrix.
 
   Expected: FAIL — the function does not exist.
 
-- [ ] **Step 2: Implement `segment_paths`** and reuse it from
+- [x] **Step 2: Implement `segment_paths`** and reuse it from
   `discover_segments` where the naming rules overlap.
 
-- [ ] **Step 3: Write the failing sandbox test**
+- [x] **Step 3: Write the failing sandbox test**
 
   In `worker_isolation.rs`, write a two-segment EWF fixture with `EwfWriter`
   and a small `maximum_segment_size`, run `Acquisition` through the worker, and
   assert both that the job succeeds and that the sandbox policy contains the
   two segment files and not the parent directory.
 
-- [ ] **Step 4: Implement the narrowed grant**
+- [x] **Step 4: Implement the narrowed grant**
 
   In `sandbox_policy`, replace the EWF branch with one read path per segment.
   Landlock `PATH_BENEATH` rules accept a regular file, so each segment is
   granted individually. Keep the non-EWF branch as it is.
 
-- [ ] **Step 5: Run the tests**
+- [x] **Step 5: Run the tests**
 
   Run: `cargo test -p native-bindings -p libewf-bindings` then
   `cargo test --workspace`
@@ -419,7 +419,7 @@ matrix.
   Expected: PASS. A missing segment must fail the job with a sandbox/read
   error, never with reduced assurance.
 
-- [ ] **Step 6: Update the residual risk and commit**
+- [x] **Step 6: Update the residual risk and commit**
 
   `git commit -am "feat(worker): grant EWF reads per segment instead of per directory"`
 
@@ -461,20 +461,20 @@ completed via commit 4a64cfe.
 - Modify: `scripts/verify-reproducible-packages.sh`
 - Modify: `docs/packaging/REPRODUCIBLE_BUILD.md`
 
-- [ ] **Step 1: Add the Flatpak build to each build set**
+- [x] **Step 1: Add the Flatpak build to each build set**
 
   Call `scripts/package-flatpak.sh --skip-build` with the same
   `OFI_OUTPUT_DIR`, `OFI_BUILD_DIR`, and `CARGO_TARGET_DIR` overrides the other
   packages use.
 
-- [ ] **Step 2: Compare the right things**
+- [x] **Step 2: Compare the right things**
 
   A Flatpak bundle is not byte-reproducible by design. Compare: the CycloneDX
   SBOM digest, the exported app metadata (`metadata` file from `build-finish`),
   and a per-file `sha256sum` manifest of `files/`. Fail when the two sets
   differ, and print the reason for the bundle-level exemption.
 
-- [ ] **Step 3: Run it**
+- [x] **Step 3: Run it**
 
   Run:
 
@@ -485,28 +485,28 @@ completed via commit 4a64cfe.
   Expected: DEB, AppImage, SBOM, and Flatpak manifests all match between build
   sets; exit 0.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
   `git commit -am "build(flatpak): compare Flatpak metadata in the reproducibility check"`
 
 ### Task C2: lintian and distribution policy review
 
-- [ ] **Step 1: Run lintian on the built DEB**
+- [x] **Step 1: Run lintian on the built DEB**
 
   Run: `lintian --display-info --pedantic packaging/output/openforensic-imager_0.1.0_amd64.deb`
 
-- [ ] **Step 2: Triage every tag**
+- [x] **Step 2: Triage every tag**
 
   Fix fixable packaging errors (control fields, maintainer scripts, file
   modes, missing man page) in `packaging/debian/`. Record every remaining tag
   with a justification.
 
-- [ ] **Step 3: Write `docs/packaging/lintian-review.md`**
+- [x] **Step 3: Write `docs/packaging/lintian-review.md`**
 
   Contents: the exact command, the tag list, what was fixed, what remains, and
   which downstream policies are still unreviewed (Debian, Arch, Fedora).
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
   `git commit -am "docs(packaging): record the lintian pass and remaining tags"`
 
@@ -517,7 +517,7 @@ completed via commit 4a64cfe.
 - Create: `scripts/check-distro-build.sh`
 - Create: `docs/packaging/distro-matrix.md`
 
-- [ ] **Step 1: Write the script**
+- [x] **Step 1: Write the script**
 
   For each image in `ubuntu:26.04`, `debian:trixie`, `archlinux:latest`,
   `fedora:latest`: bind-mount the repo read-only, install build dependencies
@@ -525,18 +525,18 @@ completed via commit 4a64cfe.
   `cargo test --workspace` and `cmake -G Ninja -S apps/desktop -B /tmp/build`,
   and capture stdout/stderr per image into `packaging/build/distro/`.
 
-- [ ] **Step 2: Run it and record the outcome**
+- [x] **Step 2: Run it and record the outcome**
 
   Expected: Ubuntu passes. For the others, record the exact failure (missing
   package names, missing TSK features, Qt version) rather than guessing.
 
-- [ ] **Step 3: Write the decision**
+- [x] **Step 3: Write the decision**
 
   In `distro-matrix.md`, state per distribution whether it gets native
   packages or is served by the AppImage and Flatpak, and what work that
   implies. This is a decision document, not a promise.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
   `git commit -am "docs(packaging): record the distribution matrix evidence"`
 
@@ -641,16 +641,16 @@ remains is dependency pinning and the redistribution review.
 
 ### Task D2: Physical-device acquisition runbook
 
-- [ ] **Step 1: Write `docs/testing/device-acquisition-runbook.md`**: hardware
+- [x] **Step 1: Write `docs/testing/device-acquisition-runbook.md`**: hardware
   write blocker set-up, device identification, expected evidence (command
   lines, hashes, screenshots), abort criteria, and the release-gate statement.
 
-- [ ] **Step 2: Record it as blocked-on-hardware** in `IMPLEMENTATION_PLAN.md`,
+- [x] **Step 2: Record it as blocked-on-hardware** in `IMPLEMENTATION_PLAN.md`,
   naming exactly what must exist before the box can be ticked.
 
 ### Task D3: Keep P6-SEC-004 an accepted limitation
 
-- [ ] **Step 1: No work.** External notarization of the audit chain stays an
+- [x] **Step 1: No work.** External notarization of the audit chain stays an
   accepted limitation with report disclosure, as `phase6-review.md` records.
   Re-check it only if distribution requirements change.
 
