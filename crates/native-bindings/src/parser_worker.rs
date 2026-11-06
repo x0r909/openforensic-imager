@@ -126,7 +126,7 @@ pub fn run_stdio_worker() -> Result<(), String> {
 }
 
 fn process_request(bytes: &[u8]) -> WorkerResponse {
-    let request: JobRequest = match serde_json::from_slice(bytes) {
+    let mut request: JobRequest = match serde_json::from_slice(bytes) {
         Ok(request) => request,
         Err(error) => return WorkerResponse::error("worker.request", error.to_string()),
     };
@@ -135,6 +135,9 @@ fn process_request(bytes: &[u8]) -> WorkerResponse {
             "worker.unsupported_operation",
             "operation is not allowed in the evidence worker",
         );
+    }
+    if let Err(error) = canonicalize_request_paths(&mut request) {
+        return WorkerResponse::error(error.code(), error.message().to_owned());
     }
     if let Err(error) = prepare_output_paths(&request) {
         return WorkerResponse::error(error.code(), error.message().to_owned());
@@ -238,6 +241,57 @@ fn prepare_output_paths(request: &JobRequest) -> Result<(), JobError> {
     };
     for path in paths {
         prepare_directory(Path::new(path))?;
+    }
+    Ok(())
+}
+
+/// Resolve every evidence path in the request to an absolute, canonical form
+/// before sandboxing. The Landlock policy grants access to these exact paths,
+/// and `open_image` canonicalizes before touching libewf; if a relative path
+/// survived to execution, the canonicalize would run *after* Landlock is
+/// applied, where walking the un-granted ancestor directories fails EPERM.
+fn canonicalize_request_paths(request: &mut JobRequest) -> Result<(), JobError> {
+    // Resolve the evidence path without borrowing `request` mutably, then
+    // assign the canonical form back. The first match works on an immutable
+    // borrow; the second matches again to find the field to overwrite.
+    let canonical = match &*request {
+        JobRequest::ImageIdentify { path } => std::fs::canonicalize(path),
+        JobRequest::PartitionAnalysis { path } => std::fs::canonicalize(path),
+        JobRequest::FilesystemList { path, .. } => std::fs::canonicalize(path),
+        JobRequest::FilesystemOpen { path, .. } => std::fs::canonicalize(path),
+        JobRequest::Verification { path, .. } => std::fs::canonicalize(path),
+        JobRequest::Acquisition { source_path, .. } => std::fs::canonicalize(source_path),
+        JobRequest::SourceSnapshot { path } => std::fs::canonicalize(path),
+        JobRequest::HexPreview { path, .. } => std::fs::canonicalize(path),
+        JobRequest::TextPreview { path, .. } => std::fs::canonicalize(path),
+        JobRequest::FileSignature { path, .. } => std::fs::canonicalize(path),
+        JobRequest::ExtractFile { path, .. } => std::fs::canonicalize(path),
+        JobRequest::ExtractDirectory { path, .. } => std::fs::canonicalize(path),
+        _ => return Ok(()),
+    };
+    let canonical = match canonical {
+        Ok(path) => path.to_string_lossy().into_owned(),
+        Err(error) => {
+            return Err(JobError::failed(
+                "worker.sandbox",
+                format!("unable to resolve evidence path: {error}"),
+            ))
+        }
+    };
+    match request {
+        JobRequest::ImageIdentify { path } => *path = canonical,
+        JobRequest::PartitionAnalysis { path } => *path = canonical,
+        JobRequest::FilesystemList { path, .. } => *path = canonical,
+        JobRequest::FilesystemOpen { path, .. } => *path = canonical,
+        JobRequest::Verification { path, .. } => *path = canonical,
+        JobRequest::Acquisition { source_path, .. } => *source_path = canonical,
+        JobRequest::SourceSnapshot { path } => *path = canonical,
+        JobRequest::HexPreview { path, .. } => *path = canonical,
+        JobRequest::TextPreview { path, .. } => *path = canonical,
+        JobRequest::FileSignature { path, .. } => *path = canonical,
+        JobRequest::ExtractFile { path, .. } => *path = canonical,
+        JobRequest::ExtractDirectory { path, .. } => *path = canonical,
+        _ => unreachable!(),
     }
     Ok(())
 }
