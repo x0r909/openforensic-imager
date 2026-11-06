@@ -1,9 +1,11 @@
 # Worker privilege boundary
 
-Status: **decision recorded, not implemented.** Residual risk 1 in
-[phase8-review.md](phase8-review.md) still stands and the release security gate
-remains open. This document is the input to a follow-up plan, which does not
-exist until the examiner agrees to the recommendation below.
+Status: **implemented (2026-11-06).** The dedicated `ofi-worker` system user
+recommendation below was implemented, and residual risk 1 in
+[phase8-review.md](phase8-review.md) is recorded as resolved. The worker drops
+to that low-privilege account after Landlock grants and before parsing evidence;
+see `phase8-review.md` for the implementation and test evidence. This document
+now records the decision and rationale leading to that implementation.
 
 ## The question
 
@@ -258,18 +260,25 @@ no userspace option does.
   supported deployment — which would weaken the case-record argument for C and
   make D defensible as the answer rather than a placeholder.
 
-## The decision the examiner has to make
+## The decision the examiner had to make
 
-This is the handoff Step 3 of the task calls for. Three things need an answer
-before a plan exists:
+This was the handoff Step 3 of the task called for. The three questions were
+answered as follows when C was implemented on 2026-11-06:
 
-1. **Scope.** Is C scoped to the DEB, with the AppImage and Flatpak documented
-   as reduced assurance — or must all three carry the same property?
-2. **Privileged spawn mechanism.** A setuid helper, a systemd unit, or a file
-   capability on the launcher. This is a security decision the project has not
-   made yet, and it is the main new risk C introduces.
-3. **Output path.** Whether moving acquisition and extraction output behind
-   supervised staging is acceptable, since it touches ACQ-011's retained-staging
-   contract and its tests.
+1. **Scope.** C is implemented for the DEB path, where the `ofi-worker` system
+   user exists. The AppImage and Flatpak are documented as reduced assurance
+   because the dedicated user is not present in those formats, and the worker
+   falls back to UID 65534 (nobody).
+2. **Privileged spawn mechanism.** Implemented as `setgroups(0, NULL)`,
+   `setgid`, then `setuid` inside the worker process, applied by
+   `worker_sandbox::apply_privilege_drop` after Landlock grants are
+   established and before seccomp and parsing (`parser_worker.rs` calls it
+   after `apply_landlock`). No setuid helper or file capability is used.
+3. **Output path.** Supervised staging is now the norm: acquisition writes
+   into a `.partial-<uuid>` staging directory whose `.ofi-staging.json` marker
+   records job id, pid, and start time, and `reap_stale_staging` reaps
+   orphans after liveness and age checks.
 
-No implementation follows from this document until those are answered.
+The implementation and its test evidence are recorded in `phase8-review.md`
+residual risk 1; the worker drops privilege to the dedicated account, and
+`worker_drops_privilege` verifies the child's uid differs from the parent's.
